@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { useAuth } from "@/hooks/use-auth";
+import { isSupabaseConfigured } from "@/lib/supabase";
 import { ArrowLeft, ArrowRight, Loader2, Mail, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -103,6 +104,14 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
         <div className="w-full max-w-sm">
           {step === "signIn" ? (
             <>
+              {!isSupabaseConfigured && (
+                <div className="mb-4 rounded-sm border border-amber-400/50 bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                  Supabase keys missing — add{" "}
+                  <code className="font-mono">VITE_SUPABASE_URL</code> and{" "}
+                  <code className="font-mono">VITE_SUPABASE_ANON_KEY</code> in
+                  the project Keys tab to enable login.
+                </div>
+              )}
               <h1 className="text-2xl font-bold tracking-tight">
                 Get started with Dokan
               </h1>

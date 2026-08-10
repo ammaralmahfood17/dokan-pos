@@ -1,5 +1,5 @@
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useQuery } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { formatBHD, formatDate } from "@/lib/format";
 import { BarChart3 } from "lucide-react";

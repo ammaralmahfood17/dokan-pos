@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
+import { flushQueue } from "@/lib/offline";
 import { useStaff, StaffProvider } from "@/hooks/use-staff";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,11 @@ function DashboardInner() {
       navigate("/onboarding", { replace: true });
     }
   }, [workspace, navigate]);
+
+  // Flush any offline-queued orders when back online (and on first mount).
+  useEffect(() => {
+    if (online) flushQueue();
+  }, [online]);
 
   if (workspace === null || workspace === undefined) {
     return (

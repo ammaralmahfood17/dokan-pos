@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useQuery, useMutation } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { formatTime, computeSLA, slaColor } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, Bell } from "lucide-react";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/lib/api";
 
 export default function KDS() {
   const orders = useQuery(api.orders.listOrders);

@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useQuery, useMutation } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { formatBHD, formatTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Printer, CheckCircle, XCircle } from "lucide-react";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/lib/api";
 
 const STATUS_BADGE: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",

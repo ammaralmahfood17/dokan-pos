@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useQuery, useMutation } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Plus, Trash2, QrCode } from "lucide-react";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/lib/api";
 
 export default function Tables() {
   const workspace = useWorkspace();

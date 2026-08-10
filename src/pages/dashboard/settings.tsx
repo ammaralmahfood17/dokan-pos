@@ -1,5 +1,5 @@
-import { useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useMutation } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useAuth } from "@/hooks/use-auth";

@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { useQuery, useConvex } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { api, type Id, type StaffMember } from "@/lib/api";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -14,14 +13,11 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, UserCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Doc, Id } from "@/convex/_generated/dataModel";
-
-type StaffMember = Doc<"staffMembers">;
 
 type Ctx = {
   /** The currently PIN-logged-in staff member, or null. */
   staff: StaffMember | null;
-  /** Their _id (useful for order creation). */
+  /** Their id (useful for order creation). */
   staffId: Id<"staffMembers"> | undefined;
   /** Whether a staff member is logged in via PIN. */
   isLoggedIn: boolean;
@@ -47,7 +43,6 @@ const STORAGE_KEY = "dokan-staff-id";
 
 export function StaffProvider({ children }: { children: React.ReactNode }) {
   const workspace = useWorkspace();
-  const convex = useConvex();
   const { t } = useI18n();
   const [storedId, setStoredId] = useState<string | null>(() =>
     typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null,
@@ -78,10 +73,7 @@ export function StaffProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      // Call the query directly via the Convex client (not a hook).
-      const staff = await convex.query(api.operations.getStaffByPin, {
-        pinCode: code,
-      });
+      const staff = await api.operations.getStaffByPin({ pinCode: code });
       if (!staff) {
         setError("Invalid PIN. Try again.");
         setLoading(false);

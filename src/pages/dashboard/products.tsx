@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useQuery, useMutation } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { formatBHD } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Select, SelectTrigger, SelectValue, SelectItem, SelectContent } from "@
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Pencil, Trash2 } from "lucide-react";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/lib/api";
 
 export default function Products() {
   const catalog = useQuery(api.catalog.posCatalog);

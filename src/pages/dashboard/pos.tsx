@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useMutation, useQuery } from "@/lib/react-query";
+import { api } from "@/lib/api";
 import { usePosCatalog } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
 import { useStaff } from "@/hooks/use-staff";
@@ -20,7 +20,7 @@ import {
   Plus, Minus, Trash2, Search, Utensils, Package, Bike,
   Banknote, CreditCard, QrCode, Percent,
 } from "lucide-react";
-import type { Id } from "@/convex/_generated/dataModel";
+import type { Id } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────
 interface CartItem {

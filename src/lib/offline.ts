@@ -1,4 +1,6 @@
 /** Offline order queue using localStorage. */
+import { api } from "./api";
+import { notifyDataChanged } from "./realtime";
 
 export interface QueuedOrder {
   id: string;
@@ -47,6 +49,30 @@ export function removeFromQueue(id: string) {
 
 export function clearQueue() {
   localStorage.removeItem(QUEUE_KEY);
+}
+
+/** Replay queued orders against the backend. Returns how many flushed. */
+export async function flushQueue(): Promise<number> {
+  const queue = getQueue().filter((e) => e.status !== "syncing");
+  if (queue.length === 0) return 0;
+
+  let flushed = 0;
+  for (const entry of queue) {
+    updateQueueEntry(entry.id, { status: "syncing" });
+    try {
+      await api.orders.createOrder(entry.payload as any);
+      removeFromQueue(entry.id);
+      flushed += 1;
+    } catch (err) {
+      console.error("[dokan] queued order failed to sync:", err);
+      updateQueueEntry(entry.id, {
+        status: "pending",
+        retryCount: entry.retryCount + 1,
+      });
+    }
+  }
+  if (flushed > 0) notifyDataChanged();
+  return flushed;
 }
 
 export function useOnlineStatus() {
