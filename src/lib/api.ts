@@ -345,8 +345,6 @@ const num = (v: unknown): number =>
 
 const ts = (v: string | null | undefined): number => (v ? Date.parse(v) : 0);
 
-const round3 = (n: number): number => Math.round(n * 1000) / 1000;
-
 function slugify(input: string): string {
   return (
     input
@@ -726,7 +724,7 @@ export const api = {
 
       if (args.seedDemoData) await seedMenu(projectId);
 
-      notifyDataChanged(["projects", "branches", "tables", "staff"]);
+      notifyDataChanged();
       return fetchProject(projectId);
     },
 
@@ -747,7 +745,7 @@ export const api = {
       if (Object.keys(patch).length === 0) return;
       const { error } = await supabase.from("projects").update(patch).eq("id", projectId);
       if (error) throw error;
-      notifyDataChanged(["projects"]);
+      notifyDataChanged();
     },
   },
 
@@ -793,7 +791,7 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged(["catalog"]);
+      notifyDataChanged();
     },
 
     updateCategory: async (args: { id: string; name?: string; nameAr?: string; sortOrder?: number }) => {
@@ -803,13 +801,13 @@ export const api = {
       if (args.sortOrder !== undefined) patch.sort_order = args.sortOrder;
       const { error } = await supabase.from("categories").update(patch).eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["catalog"]);
+      notifyDataChanged();
     },
 
     deleteCategory: async (args: { id: string }) => {
       const { error } = await supabase.from("categories").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["catalog"]);
+      notifyDataChanged();
     },
 
     createProduct: async (args: ProductInput & { name: string; nameAr: string }) => {
@@ -827,7 +825,7 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged(["catalog"]);
+      notifyDataChanged();
     },
 
     updateProduct: async (args: ProductInput & { id: string }) => {
@@ -842,13 +840,13 @@ export const api = {
       if (args.isAvailable !== undefined) patch.is_available = args.isAvailable;
       const { error } = await supabase.from("products").update(patch).eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["catalog"]);
+      notifyDataChanged();
     },
 
     deleteProduct: async (args: { id: string }) => {
       const { error } = await supabase.from("products").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["catalog"]);
+      notifyDataChanged();
     },
   },
 
@@ -865,13 +863,13 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged(["branches"]);
+      notifyDataChanged();
     },
 
     deleteBranch: async (args: { id: string }) => {
       const { error } = await supabase.from("branches").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["branches"]);
+      notifyDataChanged();
     },
 
     createTable: async (args: { branchId: string; name: string }) => {
@@ -892,13 +890,13 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged(["tables"]);
+      notifyDataChanged();
     },
 
     deleteTable: async (args: { id: string }) => {
       const { error } = await supabase.from("tables").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["tables"]);
+      notifyDataChanged();
     },
 
     /** Tables with live occupancy — driven by open (pending/preparing) orders. */
@@ -994,7 +992,7 @@ export const api = {
         if (aErr) throw aErr;
       }
 
-      notifyDataChanged(["staff"]);
+      notifyDataChanged();
     },
 
     updateStaff: async (args: {
@@ -1017,13 +1015,13 @@ export const api = {
       if (args.pinCode !== undefined) {
         await setStaffPin(args.id, args.pinCode);
       }
-      notifyDataChanged(["staff"]);
+      notifyDataChanged();
     },
 
     deleteStaff: async (args: { id: string }) => {
       const { error } = await supabase.from("staff_members").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["staff"]);
+      notifyDataChanged();
     },
   },
 
@@ -1113,7 +1111,7 @@ export const api = {
         | { order_id: string; order_number: string }
         | undefined;
       if (!row) throw new Error("Order creation failed.");
-      notifyDataChanged(["orders"]);
+      notifyDataChanged();
       return { orderNumber: row.order_number };
     },
 
@@ -1123,7 +1121,7 @@ export const api = {
         .update({ status: args.status })
         .eq("id", args.orderId);
       if (error) throw error;
-      notifyDataChanged(["orders"]);
+      notifyDataChanged();
     },
 
     payOrder: async (args: { orderId: string }) => {
@@ -1132,7 +1130,7 @@ export const api = {
         .update({ payment_status: "paid" })
         .eq("id", args.orderId);
       if (error) throw error;
-      notifyDataChanged(["orders"]);
+      notifyDataChanged();
     },
   },
 
@@ -1221,7 +1219,7 @@ export const api = {
         active: true,
       });
       if (error) throw error;
-      notifyDataChanged(["loyalty"]);
+      notifyDataChanged();
     },
 
     updateLoyaltyProgram: async (args: {
@@ -1243,13 +1241,13 @@ export const api = {
       if (Object.keys(patch).length === 0) return;
       const { error } = await supabase.from("loyalty_programs").update(patch).eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["loyalty"]);
+      notifyDataChanged();
     },
 
     deleteLoyaltyProgram: async (args: { id: string }) => {
       const { error } = await supabase.from("loyalty_programs").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["loyalty"]);
+      notifyDataChanged();
     },
 
     listLoyaltyStamps: async (
@@ -1295,13 +1293,13 @@ export const api = {
         active: true,
       });
       if (error) throw error;
-      notifyDataChanged(["promotions"]);
+      notifyDataChanged();
     },
 
     deletePromotion: async (args: { id: string }) => {
       const { error } = await supabase.from("promotions").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged(["promotions"]);
+      notifyDataChanged();
     },
   },
 
@@ -1402,7 +1400,7 @@ export const api = {
         | { order_id: string; order_number: string }
         | undefined;
       if (!row) throw new Error("Order creation failed.");
-      notifyDataChanged(["orders"]);
+      notifyDataChanged();
       return { orderNumber: row.order_number };
     },
   },
