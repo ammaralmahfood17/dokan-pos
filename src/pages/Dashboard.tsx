@@ -1,6 +1,6 @@
-import { ChevronLeft, LayoutDashboard, LogOut, Menu, QrCode, ShoppingCart, Store, Users, Coffee, Settings, Gift, Tag, BarChart3, Loader2, Radio, Bike, UserX } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
-import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { LayoutDashboard, LogOut, Menu, QrCode, ShoppingCart, Store, Users, Coffee, Settings, Gift, Tag, BarChart3, Loader2, Radio, Bike, UserX } from "lucide-react";
+import { Suspense, useEffect, useState } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
@@ -35,8 +35,14 @@ export default function DashboardShell() {
     { icon: Settings, label: "nav.settings", path: "/dashboard/settings" },
   ];
 
-  // Redirect to onboarding if no workspace
-  if (workspace === null) {
+  // Redirect to onboarding if user is signed in but has no project.
+  useEffect(() => {
+    if (workspace === null) {
+      navigate("/onboarding", { replace: true });
+    }
+  }, [workspace, navigate]);
+
+  if (workspace === null || workspace === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />

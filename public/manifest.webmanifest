@@ -1,16 +1,20 @@
 {
-  "name": "freebuff.com application",
-  "short_name": "freebuff.com",
-  "description": "freebuff.com application",
-  "start_url": "/",
+  "name": "Dokan POS — Gulf Market POS & QR Menu",
+  "short_name": "Dokan",
+  "description": "نظام نقاط البيع والمنيو الرقمي للمطاعم والمقاهي",
+  "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "background_color": "#FAFAFA",
+  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "categories": ["business", "food"],
+  "lang": "en",
+  "dir": "ltr",
   "icons": [
     {
-      "src": "/logo.png",
+      "src": "/logo.svg",
       "sizes": "any",
-      "type": "image/png",
+      "type": "image/svg+xml",
       "purpose": "any maskable"
     }
   ]

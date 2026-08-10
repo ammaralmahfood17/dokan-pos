@@ -7,6 +7,7 @@ import { ConvexReactClient } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { LanguageProvider } from "@/lib/i18n";
 import "./index.css";
 
 // Lazy load route components for better code splitting
@@ -14,6 +15,23 @@ const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+const Onboarding = lazy(() => import("./pages/Onboarding.tsx"));
+const PublicMenu = lazy(() => import("./pages/PublicMenu.tsx"));
+
+// Lazy load dashboard children
+const Overview = lazy(() => import("./pages/dashboard/overview.tsx"));
+const POS = lazy(() => import("./pages/dashboard/pos.tsx"));
+const KDS = lazy(() => import("./pages/dashboard/kds.tsx"));
+const Orders = lazy(() => import("./pages/dashboard/orders.tsx"));
+const Products = lazy(() => import("./pages/dashboard/products.tsx"));
+const Categories = lazy(() => import("./pages/dashboard/categories.tsx"));
+const Tables = lazy(() => import("./pages/dashboard/tables.tsx"));
+const Branches = lazy(() => import("./pages/dashboard/branches.tsx"));
+const Staff = lazy(() => import("./pages/dashboard/staff.tsx"));
+const Loyalty = lazy(() => import("./pages/dashboard/loyalty.tsx"));
+const Promotions = lazy(() => import("./pages/dashboard/promotions.tsx"));
+const Reports = lazy(() => import("./pages/dashboard/reports.tsx"));
+const Settings = lazy(() => import("./pages/dashboard/settings.tsx"));
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -115,27 +133,52 @@ createRoot(document.getElementById("root")!).render(
         <VlyToolbar />
       </ToolbarErrorBoundary>
       <ConvexAuthProvider client={convex}>
-        <BrowserRouter>
-          <RouteSyncer />
-          <Suspense fallback={<RouteLoading />}>
-            <Routes>
-              <Route path="/" element={<Landing />} />
-              <Route
-                path="/auth"
-                element={<AuthPage redirectAfterAuth="/dashboard" />}
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <RequireAuth>
-                    <Dashboard />
-                  </RequireAuth>
-                }
-              />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
+        <LanguageProvider>
+          <BrowserRouter>
+            <RouteSyncer />
+            <Suspense fallback={<RouteLoading />}>
+              <Routes>
+                <Route path="/" element={<Landing />} />
+                <Route
+                  path="/auth"
+                  element={<AuthPage redirectAfterAuth="/dashboard" />}
+                />
+                <Route
+                  path="/onboarding"
+                  element={
+                    <RequireAuth>
+                      <Onboarding />
+                    </RequireAuth>
+                  }
+                />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <RequireAuth>
+                      <Dashboard />
+                    </RequireAuth>
+                  }
+                >
+                  <Route index element={<Overview />} />
+                  <Route path="pos" element={<POS />} />
+                  <Route path="kds" element={<KDS />} />
+                  <Route path="orders" element={<Orders />} />
+                  <Route path="products" element={<Products />} />
+                  <Route path="categories" element={<Categories />} />
+                  <Route path="tables" element={<Tables />} />
+                  <Route path="branches" element={<Branches />} />
+                  <Route path="staff" element={<Staff />} />
+                  <Route path="loyalty" element={<Loyalty />} />
+                  <Route path="promotions" element={<Promotions />} />
+                  <Route path="reports" element={<Reports />} />
+                  <Route path="settings" element={<Settings />} />
+                </Route>
+                <Route path="/m/:projectSlug/:tableSlug" element={<PublicMenu />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </LanguageProvider>
         <Toaster />
       </ConvexAuthProvider>
     </RootErrorBoundary>
