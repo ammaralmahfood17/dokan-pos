@@ -106,12 +106,15 @@ export const tablesWithStatus = query({
         .collect(),
     ]);
 
-    const activeByTable = new Map<string, string[]>();
+    const activeByTable = new Map<
+      string,
+      { orderNumber: string; total: number }[]
+    >();
     for (const o of orders) {
       if (!o.tableId) continue;
       if (o.status === "pending" || o.status === "preparing") {
         const list = activeByTable.get(o.tableId) ?? [];
-        list.push(o.orderNumber);
+        list.push({ orderNumber: o.orderNumber, total: o.total });
         activeByTable.set(o.tableId, list);
       }
     }
@@ -120,7 +123,9 @@ export const tablesWithStatus = query({
       const activeOrders = activeByTable.get(t._id) ?? [];
       return {
         ...t,
-        activeOrders,
+        activeOrders: activeOrders.map((a) => a.orderNumber),
+        /** Sum of totals across open (pending/preparing) orders on this table. */
+        activeTotal: activeOrders.reduce((s, a) => s + a.total, 0),
         occupied: activeOrders.length > 0,
       };
     });

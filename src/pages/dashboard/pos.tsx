@@ -234,8 +234,13 @@ export default function POS() {
                 >
                   <span className={`size-1.5 rounded-full ${tb.occupied ? "bg-amber-500" : "bg-emerald-500"}`} />
                   {tb.name}
+                  {tb.occupied && (
+                    <span className="font-mono text-[9px] opacity-80">
+                      · {formatBHD(tb.activeTotal, lang)}
+                    </span>
+                  )}
                   {tb.occupied && tb.activeOrders.length > 1 && (
-                    <span className="font-mono text-[8px] opacity-80">×{tb.activeOrders.length}</span>
+                    <span className="font-mono text-[8px] opacity-70">×{tb.activeOrders.length}</span>
                   )}
                 </button>
               );
