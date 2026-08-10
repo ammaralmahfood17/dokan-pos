@@ -19,58 +19,27 @@
 --
 -- NOTE: if your tables already exist from an earlier/partial run, running
 -- this file again is safe and REQUIRED to complete the schema — it creates
--- the missing `order_sequences` table, all trigger functions (order numbers,
--- loyalty stamps, updated_at) and every RLS policy. Without a second run you
--- will see NULL order numbers and RLS "violates row-level security" errors.
+-- the missing `order_sequences` table, adds any missing columns via
+-- ALTER TABLE ... ADD COLUMN IF NOT EXISTS (see the "Column completion"
+-- section), all trigger functions (order numbers, loyalty stamps, updated_at)
+-- and every RLS policy. Without a second run you will see NULL order numbers
+-- and RLS "violates row-level security" errors.
+--
+-- If a re-run fails with `42P13: cannot change name of input parameter`,
+-- your database holds an older draft of a helper function with a different
+-- parameter name (e.g. is_staff). Drop the stale function first:
+--   drop function if exists public.is_staff(uuid) cascade;
+--   drop function if exists public.project_is_active(uuid) cascade;
+-- then run this file again. The cascade only removes RLS policies that
+-- reference them — every policy is recreated at the bottom of this file.
 -- ============================================================================
 
--- ─── Helpers ────────────────────────────────────────────────────────────────
-
--- Is the signed-in user an active staff member of the given project?
--- SECURITY DEFINER so the membership check bypasses RLS on staff_members.
-create or replace function public.is_staff(project_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists (
-    select 1 from public.staff_members s
-    where s.project_id = is_staff.project_id
-      and s.user_id = auth.uid()
-      and s.is_active = true
-  );
-$$;
-
--- Is the project currently accepting public QR-menu reads/orders?
-create or replace function public.project_is_active(project_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists (
-    select 1 from public.projects p
-    where p.id = project_is_active.project_id
-      and p.is_active = true
-  );
-$$;
-
--- Touch `updated_at` on row updates.
-create or replace function public.set_updated_at()
-returns trigger
-language plpgsql
-set search_path = public
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
 -- ─── Core tables ────────────────────────────────────────────────────────────
+-- NOTE: the helper functions (is_staff, project_is_active, set_updated_at)
+-- are defined AFTER the tables below. SQL-language functions are validated
+-- at creation time, so the tables they reference must already exist —
+-- defining them first would fail a fresh install with "relation ... does not
+-- exist".
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
@@ -253,11 +222,80 @@ create table if not exists public.promotions (
   created_at timestamptz not null default now()
 );
 
+-- ─── Helpers ────────────────────────────────────────────────────────────────
+-- Defined here, after the tables, because SQL-language functions are
+-- validated at creation time and the tables must already exist.
+
+-- Is the signed-in user an active staff member of the given project?
+-- SECURITY DEFINER so the membership check bypasses RLS on staff_members.
+-- NOTE: the parameter is deliberately named `p_project_id` (matching the
+-- rest of the migration suite). `CREATE OR REPLACE` cannot rename a
+-- parameter, so if your database already holds an older draft of this
+-- function under a different name, either drop it first or ensure the name
+-- matches — keeping it stable makes re-runs safe.
+create or replace function public.is_staff(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.staff_members s
+    where s.project_id = is_staff.p_project_id
+      and s.user_id = auth.uid()
+      and s.is_active = true
+  );
+$$;
+
+-- Is the project currently accepting public QR-menu reads/orders?
+create or replace function public.project_is_active(p_project_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.projects p
+    where p.id = project_is_active.p_project_id
+      and p.is_active = true
+  );
+$$;
+
+-- Touch `updated_at` on row updates.
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- ─── Column completion (safe re-runs over earlier drafts) ───────────────────
+-- `create table if not exists` never adds columns, so a database created from
+-- an earlier draft of this file may be missing newer columns. These are safe
+-- no-ops on a fresh install and heal partial/legacy databases.
+
+alter table public.projects add column if not exists default_language text not null default 'en';
+alter table public.products add column if not exists allergens text[] not null default '{}';
+alter table public.products add column if not exists is_available boolean not null default true;
+alter table public.orders add column if not exists order_number text;
+alter table public.orders add column if not exists source text check (source in ('pos', 'qr-menu'));
+alter table public.orders add column if not exists idempotency_key text;
+alter table public.orders add column if not exists staff_id uuid references public.staff_members(id) on delete set null;
+
 -- ─── Indexes (match the app's query patterns) ───────────────────────────────
 
 create index if not exists idx_staff_project on public.staff_members(project_id);
 create index if not exists idx_staff_user on public.staff_members(user_id) where user_id is not null;
-create index if not exists idx_staff_pin on public.staff_members(project_id, pin_code) where pin_code is not null;
+-- PIN lookups are indexed by migration 0002 (idx_staff_pin on project_id,
+-- pin_hash). The plaintext pin_code column is dropped there, so it must NOT
+-- be indexed here — otherwise re-running 0000 after 0002 would fail with
+-- "column pin_code does not exist".
 create index if not exists idx_branches_project on public.branches(project_id);
 create index if not exists idx_tables_project on public.tables(project_id);
 create index if not exists idx_tables_branch on public.tables(branch_id);
