@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useMutation, useQuery } from "@/lib/react-query";
 import { api } from "@/lib/api";
 import { usePosCatalog, useWorkspace } from "@/hooks/use-workspace";
@@ -20,7 +20,7 @@ import {
   Plus, Minus, Trash2, Search, Utensils, Package, Bike,
   Banknote, CreditCard, QrCode, Percent, Loader2,
 } from "lucide-react";
-import type { Id } from "@/lib/api";
+import type { Addon, CartAddonArg, Id, Product, TableWithStatus } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────
 interface CartItem {
@@ -48,24 +48,19 @@ export default function POS() {
   const [search, setSearch] = useState("");
   const [orderType, setOrderType] = useState<"dine-in" | "takeaway" | "delivery">("dine-in");
   const [selectedTable, setSelectedTable] = useState<Id<"tables"> | undefined>(undefined);
-  const [pendingTable, setPendingTable] = useState<any>(null);
+  const [pendingTable, setPendingTable] = useState<TableWithStatus | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "benefitpay" | "card">("cash");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [discount, setDiscount] = useState(0);
   const [showPayment, setShowPayment] = useState(false);
-  const [showAddon, setShowAddon] = useState<any>(null);
-  const [addonSelections, setAddonSelections] = useState<any[]>([]);
-
-  // Clear the selected table when switching away from dine-in.
-  useEffect(() => {
-    if (orderType !== "dine-in") setSelectedTable(undefined);
-  }, [orderType]);
+  const [showAddon, setShowAddon] = useState<Product | null>(null);
+  const [addonSelections, setAddonSelections] = useState<Addon[]>([]);
 
   const categories = catalog?.categories ?? [];
   const allProducts = catalog?.products ?? [];
-  const addonsByProduct = (catalog?.addonsByProduct ?? {}) as Record<string, any[]>;
+  const addonsByProduct = catalog?.addonsByProduct ?? {};
 
   const filtered = allProducts.filter((p) => {
     const matchCat = !activeCategory || p.categoryId === activeCategory;
@@ -77,7 +72,7 @@ export default function POS() {
   });
 
   // Add to cart
-  const addToCart = useCallback((product: typeof allProducts[0], selectedAddons: any[] = []) => {
+  const addToCart = useCallback((product: Product, selectedAddons: CartAddonArg[] = []) => {
     setCart((prev) => {
       const existing = prev.find(
         (i) => i.productId === product._id && JSON.stringify(i.addons) === JSON.stringify(selectedAddons),
@@ -154,6 +149,10 @@ export default function POS() {
       addToQueue(payload);
       toast(t("pos.orderPlaced"));
       setCart([]);
+      setShowPayment(false);
+      setDiscount(0);
+      setCustomerName("");
+      setCustomerPhone("");
       setSubmitting(false);
       return;
     }
@@ -397,7 +396,10 @@ export default function POS() {
                 type="button"
                 role="radio"
                 aria-checked={orderType === opt.value}
-                onClick={() => setOrderType(opt.value)}
+                onClick={() => {
+                  setOrderType(opt.value);
+                  if (opt.value !== "dine-in") setSelectedTable(undefined);
+                }}
                 className={`flex flex-1 items-center justify-center gap-1.5 rounded-sm py-2 text-[10px] font-medium transition-colors
                   ${orderType === opt.value ? "bg-foreground text-background" : "border border-border text-muted-foreground hover:bg-secondary"}`}
               >
@@ -505,7 +507,7 @@ export default function POS() {
             </Button>
             <Button
               onClick={() => {
-                setSelectedTable(pendingTable._id);
+                if (pendingTable) setSelectedTable(pendingTable._id);
                 setPendingTable(null);
               }}
             >
@@ -523,7 +525,7 @@ export default function POS() {
               <DialogTitle>{lang === "ar" && showAddon.nameAr ? showAddon.nameAr : showAddon.name}</DialogTitle>
             </DialogHeader>
             <div className="space-y-2">
-              {(addonsByProduct[showAddon._id] ?? []).map((a: any) => (
+              {(addonsByProduct[showAddon._id] ?? []).map((a: Addon) => (
                 <label
                   key={a._id}
                   className="flex cursor-pointer items-center justify-between rounded-sm border border-border p-3 text-sm transition-colors hover:bg-secondary"
@@ -531,12 +533,12 @@ export default function POS() {
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={addonSelections.some((s: any) => s._id === a._id)}
+                      checked={addonSelections.some((s) => s._id === a._id)}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          setAddonSelections((prev: any[]) => [...prev, a]);
+                          setAddonSelections((prev) => [...prev, a]);
                         } else {
-                          setAddonSelections((prev: any[]) => prev.filter((s: any) => s._id !== a._id));
+                          setAddonSelections((prev) => prev.filter((s) => s._id !== a._id));
                         }
                       }}
                       className="size-3.5 accent-foreground"
@@ -549,7 +551,7 @@ export default function POS() {
             </div>
             <Button
               onClick={() => {
-                addToCart(showAddon, addonSelections.map((a: any) => ({
+                addToCart(showAddon, addonSelections.map((a) => ({
                   addonId: a._id,
                   name: a.name,
                   nameAr: a.nameAr,

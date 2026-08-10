@@ -12,7 +12,7 @@ export default function KDS() {
   const orders = useQuery(api.orders.listOrders);
   const updateStatus = useMutation(api.orders.updateOrderStatus);
   const { t, lang } = useI18n();
-  const [now, setNow] = useState(Date.now());
+  const [, setNow] = useState(0);
 
   // Update SLA timers every 30s
   useEffect(() => {
@@ -28,17 +28,22 @@ export default function KDS() {
     if (pending > prevCountRef.current && prevCountRef.current > 0) {
       // Play notification sound
       try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.3);
+        const AudioCtx =
+          window.AudioContext ??
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) {
+          const audioCtx = new AudioCtx();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = 880;
+          gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.3);
+        }
       } catch {
         // audio not supported
       }
@@ -101,14 +106,14 @@ export default function KDS() {
 
                   {/* Items */}
                   <div className="mt-3 space-y-1">
-                    {o.items.map((item: any) => (
+                    {o.items.map((item) => (
                       <div key={item._id} className="flex justify-between text-xs">
                         <span>
                           {item.quantity}× {lang === "ar" && item.productNameAr ? item.productNameAr : item.productName}
                         </span>
-                        {item.addons?.length > 0 && (
+                        {item.addons && item.addons.length > 0 && (
                           <span className="text-muted-foreground">
-                            +{item.addons.map((a: any) => a.addonName).join(", ")}
+                            +{item.addons.map((a) => a.addonName).join(", ")}
                           </span>
                         )}
                       </div>
@@ -168,7 +173,7 @@ export default function KDS() {
                     </Button>
                   </div>
                   <div className="mt-2 space-y-0.5">
-                    {o.items.map((item: any) => (
+                    {o.items.map((item) => (
                       <p key={item._id} className="text-xs">
                         {item.quantity}× {item.productName}
                       </p>

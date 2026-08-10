@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { notifyDataChanged } from "./realtime";
+import { notifyDataChangedDebounced } from "./realtime";
 
 /**
  * Supabase client — the single backend connection for Dokan.
@@ -27,7 +27,7 @@ if (typeof window !== "undefined" && isSupabaseConfigured) {
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "orders" },
-      () => notifyDataChanged(),
+      () => notifyDataChangedDebounced(),
     )
     .subscribe();
 }

@@ -9,6 +9,16 @@ import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import { LanguageProvider } from "@/lib/i18n";
 import "./index.css";
 
+// Register the PWA service worker in production builds only — the dev preview
+// must always serve fresh modules.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .catch((err) => console.warn("[dokan] service worker registration failed:", err));
+  });
+}
+
 // Lazy load route components for better code splitting
 const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));

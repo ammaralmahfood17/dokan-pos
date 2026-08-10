@@ -5,7 +5,6 @@ import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { Loader2, ArrowRight, Plus, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { Wordmark } from "./Landing";
@@ -16,9 +15,8 @@ export default function Onboarding() {
   const workspace = useQuery(api.projects.myWorkspace);
   const navigate = useNavigate();
   const createProject = useMutation(api.projects.createProject);
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState(0);
   const [business, setBusiness] = useState({ name: "", nameAr: "" });
   const [branch, setBranch] = useState({ name: "", nameAr: "" });
   const [tableNames, setTableNames] = useState(["Table 1", "Table 2", "Table 3", "Table 4"]);

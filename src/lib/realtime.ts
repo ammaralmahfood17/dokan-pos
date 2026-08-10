@@ -3,8 +3,8 @@
  *
  * Mutations call `notifyDataChanged()` after they succeed; any mounted
  * `useQuery` subscribed via `subscribeData` refetches. Supabase Realtime
- * (orders channel) also calls `notifyDataChanged()` so the KDS, POS table
- * occupancy and order lists stay live across devices.
+ * (orders channel) calls the debounced variant so rapid-fire events (a busy
+ * KDS bumping several orders at once) don't trigger a refetch storm.
  */
 
 type Listener = () => void;
@@ -26,4 +26,15 @@ export function notifyDataChanged() {
       console.error("[dokan] data listener error:", err);
     }
   });
+}
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Coalesce bursts of events into a single refetch (trailing edge). */
+export function notifyDataChangedDebounced(delayMs = 300) {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    notifyDataChanged();
+  }, delayMs);
 }

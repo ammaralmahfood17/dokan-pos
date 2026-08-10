@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { notifyDataChanged, subscribeData } from "./realtime";
 
-type QueryFn = (args?: any) => Promise<any>;
-
 /**
  * Reactive data hook — drop-in for `useQuery` from "convex/react".
  *
@@ -10,13 +8,20 @@ type QueryFn = (args?: any) => Promise<any>;
  * - Refetches whenever the serialized args change.
  * - Refetches on `notifyDataChanged()` (after any mutation or a Realtime event).
  */
-export function useQuery<T>(fn: (args?: any) => Promise<T>, args?: any): T | undefined {
-  const [snapshot, setSnapshot] = useState<{ v: any } | null>(null);
+export function useQuery<T, A = unknown>(
+  fn: (args: A) => Promise<T>,
+  args?: A,
+): T | undefined {
+  const [snapshot, setSnapshot] = useState<{ v: T | undefined } | null>(null);
 
   const fnRef = useRef(fn);
-  fnRef.current = fn;
-  const argsRef = useRef(args);
-  argsRef.current = args;
+  const argsRef = useRef<A | undefined>(args);
+
+  // Keep the refs fresh outside of render (react-hooks/refs: no ref writes during render).
+  useEffect(() => {
+    fnRef.current = fn;
+    argsRef.current = args;
+  });
 
   const key = JSON.stringify({ f: (fn as { name?: string }).name ?? "", a: args ?? null });
 
@@ -25,7 +30,7 @@ export function useQuery<T>(fn: (args?: any) => Promise<T>, args?: any): T | und
 
     const load = async () => {
       try {
-        const v = await fnRef.current(argsRef.current);
+        const v = await fnRef.current(argsRef.current as A);
         if (alive) setSnapshot({ v });
       } catch (err) {
         console.error(`[dokan] query "${key}" failed:`, err);
@@ -34,7 +39,11 @@ export function useQuery<T>(fn: (args?: any) => Promise<T>, args?: any): T | und
     };
 
     load();
-    return subscribeData(load);
+    const unsub = subscribeData(load);
+    return () => {
+      alive = false;
+      unsub();
+    };
   }, [key]);
 
   return snapshot === null ? undefined : snapshot.v;
@@ -44,10 +53,10 @@ export function useQuery<T>(fn: (args?: any) => Promise<T>, args?: any): T | und
  * Mutation hook — drop-in for `useMutation` from "convex/react".
  * Invalidates every mounted query after the mutation resolves.
  */
-export function useMutation(fn: QueryFn) {
+export function useMutation<T, A = unknown>(fn: (args: A) => Promise<T>) {
   return useCallback(
-    async (args?: any) => {
-      const result = await fn(args);
+    async (args?: A) => {
+      const result = await fn(args as A);
       notifyDataChanged();
       return result;
     },

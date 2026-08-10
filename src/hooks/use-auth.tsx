@@ -43,13 +43,11 @@ export function useAuth() {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // When Supabase isn't configured there is nothing to load — start ready.
+  const [isLoading, setIsLoading] = useState(() => !isSupabaseConfigured);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setIsLoading(false);
-      return;
-    }
+    if (!isSupabaseConfigured) return;
     let cancelled = false;
     const finish = (s: Session | null) => {
       if (cancelled) return;

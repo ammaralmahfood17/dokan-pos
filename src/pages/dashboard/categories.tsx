@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Plus, Pencil, Trash2 } from "lucide-react";
-import type { Id } from "@/lib/api";
+import type { Category, Id } from "@/lib/api";
 
 export default function Categories() {
   const catalog = useQuery(api.catalog.posCatalog);
@@ -14,12 +14,12 @@ export default function Categories() {
   const updateCategory = useMutation(api.catalog.updateCategory);
   const deleteCategory = useMutation(api.catalog.deleteCategory);
   const { t } = useI18n();
-  const [editing, setEditing] = useState<any>(null);
+  const [editing, setEditing] = useState<Category | null>(null);
   const [open, setOpen] = useState(false);
 
   const categories = catalog?.categories ?? [];
 
-  const handleSave = async (formData: any) => {
+  const handleSave = async (formData: { name: string; nameAr: string; sortOrder?: number }) => {
     if (editing?._id) {
       await updateCategory({ id: editing._id, ...formData });
     } else {
@@ -46,7 +46,7 @@ export default function Categories() {
             <form onSubmit={(e) => {
               e.preventDefault();
               const fd = new FormData(e.currentTarget);
-              handleSave({ name: fd.get("name"), nameAr: fd.get("nameAr"), sortOrder: Number(fd.get("sortOrder")) || 0 });
+              handleSave({ name: String(fd.get("name") ?? ""), nameAr: String(fd.get("nameAr") ?? ""), sortOrder: Number(fd.get("sortOrder")) || 0 });
             }} className="space-y-4">
               <Input name="name" placeholder="English name" defaultValue={editing?.name ?? ""} required />
               <Input name="nameAr" placeholder="الاسم بالعربية" defaultValue={editing?.nameAr ?? ""} required />

@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@/lib/react-query";
 import { api } from "@/lib/api";
+import type { Addon, Product } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { formatBHD } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { ShoppingCart, Plus, Minus, Trash2, Phone, Bell, CheckCircle, Loader2 } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Trash2, Bell, CheckCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useParams } from "react-router";
 
@@ -23,18 +23,27 @@ export default function PublicMenu() {
   const { t, lang } = useI18n();
   const [placing, setPlacing] = useState(false);
 
+  type CartItem = {
+    productId: string;
+    name: string;
+    nameAr?: string;
+    unitPrice: number;
+    quantity: number;
+    addons: Addon[];
+  };
+
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [cart, setCart] = useState<any[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [showAddon, setShowAddon] = useState<any>(null);
-  const [addonSelections, setAddonSelections] = useState<any[]>([]);
+  const [showAddon, setShowAddon] = useState<Product | null>(null);
+  const [addonSelections, setAddonSelections] = useState<Addon[]>([]);
   const [placed, setPlaced] = useState<{ orderNumber: string } | null>(null);
 
   const project = menu?.project;
   const categories = menu?.categories ?? [];
   const products = menu?.products ?? [];
-  const addonsByProduct = (menu?.addonsByProduct ?? {}) as Record<string, any[]>;
+  const addonsByProduct: Record<string, Addon[]> = menu?.addonsByProduct ?? {};
 
   const displayLang = (project?.defaultLanguage ?? "en") === "ar" ? "ar" : lang;
 
@@ -42,25 +51,29 @@ export default function PublicMenu() {
     !activeCategory || p.categoryId === activeCategory,
   );
 
-  const addToCart = (product: any, selectedAddons: any[] = []) => {
+  const addToCart = (product: Product, selectedAddons: Addon[] = []) => {
     setCart((prev) => {
       const existing = prev.find(
-        (i: any) => i.productId === product._id && JSON.stringify(i.addons) === JSON.stringify(selectedAddons),
+        (i) => i.productId === product._id && JSON.stringify(i.addons) === JSON.stringify(selectedAddons),
       );
-      if (existing) return prev.map((i: any) => i === existing ? { ...i, quantity: i.quantity + 1 } : i);
+      if (existing) return prev.map((i) => (i === existing ? { ...i, quantity: i.quantity + 1 } : i));
       return [...prev, {
-        productId: product._id, name: product.name, nameAr: product.nameAr,
-        unitPrice: product.price, quantity: 1, addons: selectedAddons,
+        productId: product._id,
+        name: product.name,
+        nameAr: product.nameAr,
+        unitPrice: product.price,
+        quantity: 1,
+        addons: selectedAddons,
       }];
     });
   };
 
-  const subtotal = cart.reduce((s: number, i: any) => {
-    const addonTotal = i.addons.reduce((a: number, a2: any) => a + a2.price, 0);
+  const subtotal = cart.reduce((s, i) => {
+    const addonTotal = i.addons.reduce((a, a2) => a + a2.price, 0);
     return s + (i.unitPrice + addonTotal) * i.quantity;
   }, 0);
 
-  const cartCount = cart.reduce((s: number, i: any) => s + i.quantity, 0);
+  const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
   const handlePlace = async () => {
     if (!projectSlug || !tableSlug || placing) return;
@@ -71,13 +84,16 @@ export default function PublicMenu() {
         tableSlug,
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
-        items: cart.map((i: any) => ({
+        items: cart.map((i) => ({
           productId: i.productId,
           name: i.name,
           nameAr: i.nameAr,
           unitPrice: i.unitPrice,
           quantity: i.quantity,
-          addons: i.addons.length > 0 ? i.addons : undefined,
+          addons:
+            i.addons.length > 0
+              ? i.addons.map((a) => ({ addonId: a._id, name: a.name, nameAr: a.nameAr, price: a.price }))
+              : undefined,
         })),
       });
       setPlaced(result);
@@ -153,24 +169,24 @@ export default function PublicMenu() {
                 <SheetTitle>{t("menu.yourOrder")} ({cartCount})</SheetTitle>
               </SheetHeader>
               <div className="mt-6 space-y-3">
-                {cart.map((item: any, idx: number) => (
+                {cart.map((item, idx) => (
                   <div key={idx} className="rounded-sm border border-border p-3">
                     <div className="flex justify-between">
                       <p className="text-sm font-medium">
                         {displayLang === "ar" && item.nameAr ? item.nameAr : item.name}
                       </p>
                       <span className="font-mono text-xs">
-                        {formatBHD((item.unitPrice + item.addons.reduce((a: number, a2: any) => a + a2.price, 0)) * item.quantity, displayLang)}
+                        {formatBHD((item.unitPrice + item.addons.reduce((a, a2) => a + a2.price, 0)) * item.quantity, displayLang)}
                       </span>
                     </div>
                     {item.addons.length > 0 && (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        + {item.addons.map((a: any) => displayLang === "ar" ? a.nameAr : a.name).join(", ")}
+                        + {item.addons.map((a) => displayLang === "ar" ? a.nameAr : a.name).join(", ")}
                       </p>
                     )}
                     <div className="mt-2 flex items-center gap-2">
                       <button type="button" onClick={() => {
-                        setCart((prev: any[]) => {
+                        setCart((prev) => {
                           if (prev[idx].quantity <= 1) return prev.filter((_, i) => i !== idx);
                           return prev.map((i, k) => k === idx ? { ...i, quantity: i.quantity - 1 } : i);
                         });
@@ -179,12 +195,12 @@ export default function PublicMenu() {
                       </button>
                       <span className="font-mono text-xs min-w-[20px] text-center">{item.quantity}</span>
                       <button type="button" onClick={() => {
-                        setCart((prev: any[]) => prev.map((i, k) => k === idx ? { ...i, quantity: i.quantity + 1 } : i));
+                        setCart((prev) => prev.map((i, k) => k === idx ? { ...i, quantity: i.quantity + 1 } : i));
                       }} className="flex size-7 items-center justify-center rounded-sm border border-border">
                         <Plus className="size-3" />
                       </button>
                       <button type="button" onClick={() => {
-                        setCart((prev: any[]) => prev.filter((_, i) => i !== idx));
+                        setCart((prev) => prev.filter((_, i) => i !== idx));
                       }} className="ms-auto flex size-7 items-center justify-center text-destructive">
                         <Trash2 className="size-3" />
                       </button>
@@ -307,13 +323,13 @@ export default function PublicMenu() {
             <DialogTitle>{displayLang === "ar" && showAddon?.nameAr ? showAddon.nameAr : showAddon?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
-            {(addonsByProduct[showAddon?._id] ?? []).map((a: any) => (
+            {(addonsByProduct[showAddon?._id ?? ""] ?? []).map((a) => (
               <label key={a._id} className="flex items-center justify-between rounded-sm border border-border p-3 text-sm cursor-pointer hover:bg-secondary">
                 <div className="flex items-center gap-2">
-                  <input type="checkbox" checked={addonSelections.some((s: any) => s._id === a._id)}
+                  <input type="checkbox" checked={addonSelections.some((s) => s._id === a._id)}
                     onChange={(e) => {
-                      if (e.target.checked) setAddonSelections((prev: any[]) => [...prev, a]);
-                      else setAddonSelections((prev: any[]) => prev.filter((s: any) => s._id !== a._id));
+                      if (e.target.checked) setAddonSelections((prev) => [...prev, a]);
+                      else setAddonSelections((prev) => prev.filter((s) => s._id !== a._id));
                     }}
                     className="size-4 accent-foreground"
                   />
@@ -324,7 +340,7 @@ export default function PublicMenu() {
             ))}
           </div>
           <Button onClick={() => {
-            addToCart(showAddon, addonSelections);
+            if (showAddon) addToCart(showAddon, addonSelections);
             setShowAddon(null);
           }} className="w-full">
             {t("menu.addToCart")} ({addonSelections.length})

@@ -27,7 +27,7 @@ export default function Promotions() {
     await createPromotion({
       name: fd.get("name") as string,
       nameAr: fd.get("nameAr") as string || undefined,
-      type: fd.get("type") as any,
+      type: fd.get("type") as string,
       value: Number(fd.get("value")) || undefined,
       minOrderAmount: Number(fd.get("minOrderAmount")) || undefined,
     });

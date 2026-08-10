@@ -1,4 +1,4 @@
-import { LayoutDashboard, LogOut, Menu, QrCode, ShoppingCart, Store, Users, Coffee, Settings, Gift, Tag, BarChart3, Loader2, Radio, Bike, UserCheck, X, UserX } from "lucide-react";
+import { LayoutDashboard, LogOut, Menu, QrCode, ShoppingCart, Store, Users, Coffee, Settings, Gift, Tag, BarChart3, Loader2, Radio, UserCheck, X, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
@@ -9,7 +9,6 @@ import { useStaff, StaffProvider } from "@/hooks/use-staff";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function DashboardShell() {
@@ -23,7 +22,7 @@ export default function DashboardShell() {
 function DashboardInner() {
   const workspace = useWorkspace();
   const { user, signOut } = useAuth();
-  const { staff, staffId, isLoggedIn, openLogin, logout } = useStaff();
+  const { staff, isLoggedIn, openLogin, logout } = useStaff();
   const online = useOnline();
   const navigate = useNavigate();
   const location = useLocation();

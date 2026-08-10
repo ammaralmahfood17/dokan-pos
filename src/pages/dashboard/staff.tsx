@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useMutation } from "@/lib/react-query";
-import { api } from "@/lib/api";
+import { api, type StaffMember } from "@/lib/api";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectItem, SelectContent, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2 } from "lucide-react";
 
 const ROLE_KEYS: Record<string, string> = {
   owner: "Owner",
@@ -20,33 +20,68 @@ export default function Staff() {
   const workspace = useWorkspace();
   const members = workspace?.staff ?? [];
   const createStaff = useMutation(api.operations.createStaff);
+  const updateStaff = useMutation(api.operations.updateStaff);
+  const deleteStaff = useMutation(api.operations.deleteStaff);
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
 
-  const handleAdd = async (e: React.FormEvent<HTMLFormElement>) => {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<StaffMember | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    await createStaff({
-      fullName: fd.get("fullName") as string,
-      role: fd.get("role") as any,
-      pinCode: fd.get("pinCode") as string || undefined,
-    });
-    setOpen(false);
+    setSaving(true);
+    try {
+      const fullName = String(fd.get("fullName") ?? "");
+      const role = String(fd.get("role") ?? "cashier");
+      const pinCode = String(fd.get("pinCode") ?? "").trim() || undefined;
+      if (editing) {
+        await updateStaff({ id: editing._id, fullName, role, pinCode: pinCode ?? null });
+      } else {
+        await createStaff({ fullName, role, pinCode });
+      }
+      setOpen(false);
+      setEditing(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (m: StaffMember) => {
+    if (confirm(`Remove ${m.fullName} from the team?`)) {
+      await deleteStaff({ id: m._id });
+    }
   };
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold tracking-tight">{t("nav.staff")}</h1>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(o) => {
+            setOpen(o);
+            if (!o) setEditing(null);
+          }}
+        >
           <DialogTrigger asChild>
-            <Button size="sm" className="gap-2"><Plus className="size-4" /> {t("staff.addMember")}</Button>
+            <Button size="sm" className="gap-2">
+              <Plus className="size-4" /> {t("staff.addMember")}
+            </Button>
           </DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>{t("staff.addMember")}</DialogTitle></DialogHeader>
-            <form onSubmit={handleAdd} className="space-y-4">
-              <Input name="fullName" placeholder={t("staff.fullName")} required />
-              <Select name="role" defaultValue="cashier">
+            <DialogHeader>
+              <DialogTitle>{editing ? "Edit" : "Add"} staff member</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSave} className="space-y-4">
+              <Input
+                name="fullName"
+                placeholder={t("staff.fullName")}
+                defaultValue={editing?.fullName ?? ""}
+                required
+              />
+              <Select name="role" defaultValue={editing?.role ?? "cashier"}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Object.entries(ROLE_KEYS).map(([k, v]) => (
@@ -54,8 +89,16 @@ export default function Staff() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input name="pinCode" placeholder={t("staff.pin")} maxLength={4} />
-              <Button type="submit" className="w-full">{t("common.create")}</Button>
+              <Input
+                name="pinCode"
+                placeholder={t("staff.pin") + " (4 digits)"}
+                maxLength={4}
+                inputMode="numeric"
+                defaultValue={editing?.pinCode ?? ""}
+              />
+              <Button type="submit" className="w-full" disabled={saving}>
+                {saving ? <Loader2 className="size-4 animate-spin" /> : editing ? "Update" : t("common.create")}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -77,9 +120,38 @@ export default function Staff() {
                 <td className="px-4 py-3 font-medium">{m.fullName}</td>
                 <td className="px-4 py-3 text-xs capitalize text-muted-foreground">{ROLE_KEYS[m.role] ?? m.role}</td>
                 <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{m.pinCode ?? "—"}</td>
-                <td className="px-4 py-3 text-right" />
+                <td className="px-4 py-3 text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => {
+                        setEditing(m);
+                        setOpen(true);
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-destructive"
+                      onClick={() => handleDelete(m)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </td>
               </tr>
             ))}
+            {members.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  {t("common.noResults")}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

@@ -1,9 +1,7 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { api, type Id, type StaffMember } from "@/lib/api";
 import { useWorkspace } from "@/hooks/use-workspace";
-import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -11,7 +9,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Loader2, UserCheck, X } from "lucide-react";
+import { Loader2, UserCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Ctx = {
@@ -43,7 +41,6 @@ const STORAGE_KEY = "dokan-staff-id";
 
 export function StaffProvider({ children }: { children: React.ReactNode }) {
   const workspace = useWorkspace();
-  const { t } = useI18n();
   const [storedId, setStoredId] = useState<string | null>(() =>
     typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null,
   );

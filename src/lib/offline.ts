@@ -1,5 +1,5 @@
 /** Offline order queue using localStorage. */
-import { api } from "./api";
+import { api, type CreateOrderArgs } from "./api";
 import { notifyDataChanged } from "./realtime";
 
 export interface QueuedOrder {
@@ -60,7 +60,7 @@ export async function flushQueue(): Promise<number> {
   for (const entry of queue) {
     updateQueueEntry(entry.id, { status: "syncing" });
     try {
-      await api.orders.createOrder(entry.payload as any);
+      await api.orders.createOrder(entry.payload as CreateOrderArgs);
       removeFromQueue(entry.id);
       flushed += 1;
     } catch (err) {

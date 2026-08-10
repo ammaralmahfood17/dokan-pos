@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Printer, CheckCircle, XCircle } from "lucide-react";
-import type { Id } from "@/lib/api";
+import type { Order } from "@/lib/api";
 
 const STATUS_BADGE: Record<string, string> = {
   pending: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
@@ -23,7 +23,7 @@ export default function Orders() {
   const payOrder = useMutation(api.orders.payOrder);
   const { t, lang } = useI18n();
   const [filterStatus, setFilterStatus] = useState<string | null>(null);
-  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   const filtered = (orders ?? []).filter((o) =>
     filterStatus ? o.status === filterStatus : true,
@@ -70,7 +70,7 @@ export default function Orders() {
                   {o.tableName && <> · {t("menu.table")} {o.tableName}</>}
                 </p>
                 <p className="text-xs truncate mt-0.5">
-                  {o.items.slice(0, 3).map((i: any) =>
+                  {o.items.slice(0, 3).map((i) =>
                     `${i.quantity}× ${i.productName}`
                   ).join(", ")}
                   {o.items.length > 3 && ` +${o.items.length - 3} more`}
@@ -126,7 +126,11 @@ export default function Orders() {
   );
 }
 
-function ReceiptPreview({ order, lang, t }: any) {
+function ReceiptPreview({ order, lang, t }: {
+  order: Order;
+  lang: "en" | "ar";
+  t: (key: string) => string;
+}) {
   return (
     <div className="receipt-print mx-auto" style={{ width: 302, fontSize: 9, fontFamily: "'Courier New', monospace" }}>
       <div className="receipt-header">
@@ -137,7 +141,7 @@ function ReceiptPreview({ order, lang, t }: any) {
       <p>{order.orderNumber} · {formatTime(order._creationTime, lang)}</p>
       <p>{t(`order.type.${order.orderType}`)}</p>
       <div className="receipt-divider" />
-      {order.items.map((item: any) => (
+      {order.items.map((item) => (
         <div key={item._id} style={{ display: "flex", justifyContent: "space-between" }}>
           <span>{item.quantity}× {item.productName}</span>
           <span className="font-mono">{(item.unitPrice * item.quantity).toFixed(3)}</span>
@@ -149,7 +153,7 @@ function ReceiptPreview({ order, lang, t }: any) {
         <span className="font-mono">{order.subtotal.toFixed(3)}</span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <span>{t("pos.vat")} (10%)</span>
+        <span>{t("pos.vat")} ({order.subtotal > 0 ? Math.round((order.vatAmount / order.subtotal) * 100) : 0}%)</span>
         <span className="font-mono">{order.vatAmount.toFixed(3)}</span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>

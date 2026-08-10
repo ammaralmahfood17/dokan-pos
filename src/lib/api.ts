@@ -15,7 +15,8 @@ import { notifyDataChanged } from "./realtime";
 
 // ─── Types (mirrors the old Convex data model) ─────────────────────────────
 
-export type Id<T extends string = string> = string;
+/** A table-scoped id (phantom-branded string; same runtime shape). */
+export type Id<T extends string = string> = string & { __table?: T };
 
 export interface Project {
   _id: Id<"projects">;
@@ -48,6 +49,12 @@ export interface TableRow {
   name: string;
   slug: string;
   isActive: boolean;
+}
+
+export interface TableWithStatus extends TableRow {
+  occupied: boolean;
+  activeOrders: string[];
+  activeTotal: number;
 }
 
 export interface Category {
@@ -201,6 +208,116 @@ export interface PublicMenu {
   tableName?: string;
 }
 
+// ─── Input types for mutations ─────────────────────────────────────────────
+
+export interface CartAddonArg {
+  addonId?: string;
+  name: string;
+  nameAr?: string;
+  price: number;
+}
+
+export interface CartItemArg {
+  productId?: string;
+  name: string;
+  nameAr?: string;
+  unitPrice: number;
+  quantity: number;
+  notes?: string;
+  addons?: CartAddonArg[];
+}
+
+export interface CreateOrderArgs {
+  orderType?: "dine-in" | "takeaway" | "delivery";
+  paymentMethod?: "cash" | "benefitpay" | "card";
+  paymentStatus?: "paid" | "pending";
+  staffId?: string;
+  tableId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  discountAmount?: number;
+  items?: CartItemArg[];
+}
+
+export interface ProductInput {
+  id?: string;
+  name?: string;
+  nameAr?: string;
+  categoryId?: string;
+  description?: string;
+  descriptionAr?: string;
+  price?: number | string;
+  allergens?: string[];
+  isAvailable?: boolean;
+}
+
+// ─── DB row shapes (Supabase REST returns these untyped) ───────────────────
+
+interface DbProject {
+  id: string; slug: string; name: string; name_ar: string | null;
+  currency: string | null; vat_number: string | null; vat_rate: string | number | null;
+  logo_url: string | null; is_active: boolean; default_language: string | null;
+  created_at: string; updated_at: string | null;
+}
+interface DbBranch {
+  id: string; project_id: string; name: string; name_ar: string | null;
+  address: string | null; phone: string | null; is_active: boolean; created_at: string;
+}
+interface DbTable {
+  id: string; branch_id: string | null; project_id: string; name: string;
+  slug: string; is_active: boolean; created_at: string;
+}
+interface DbCategory {
+  id: string; project_id: string; name: string; name_ar: string;
+  sort_order: number | null; is_active: boolean; created_at: string;
+}
+interface DbProduct {
+  id: string; project_id: string; category_id: string | null; name: string; name_ar: string;
+  description: string | null; description_ar: string | null; price: string | number;
+  cost_price: string | number | null; image_url: string | null; allergens: string[] | null;
+  is_available: boolean; is_active: boolean; created_at: string;
+}
+interface DbAddon {
+  id: string; project_id: string; product_id: string; name: string; name_ar: string;
+  price: string | number; is_active: boolean; created_at: string;
+}
+interface DbStaff {
+  id: string; project_id: string; user_id: string | null; full_name: string;
+  role: string; pin_code: string | null; is_active: boolean; created_at: string;
+}
+interface DbOrder {
+  id: string; project_id: string; branch_id: string | null; table_id: string | null;
+  staff_id: string | null; order_number: string; order_type: string; status: string;
+  subtotal: string | number; vat_amount: string | number; discount_amount: string | number;
+  total: string | number; payment_method: string; payment_status: string;
+  customer_phone: string | null; customer_name: string | null; notes: string | null;
+  idempotency_key: string | null; source: string | null; created_at: string;
+  updated_at: string | null;
+}
+interface DbOrderItem {
+  id: string; order_id: string; product_id: string | null; product_name: string;
+  product_name_ar: string | null; unit_price: string | number; quantity: number;
+  total_price: string | number; notes: string | null; created_at: string;
+}
+interface DbOrderItemAddon {
+  id: string; order_item_id: string; addon_id: string | null; addon_name: string;
+  addon_name_ar: string | null; price: string | number; created_at: string;
+}
+interface DbLoyaltyProgram {
+  id: string; project_id: string; name: string; name_ar: string | null;
+  stamp_target: number | null; reward_name: string | null; reward_name_ar: string | null;
+  active: boolean; created_at: string;
+}
+interface DbLoyaltyStamp {
+  id: string; program_id: string; customer_phone: string; current_stamps: number;
+  redeemed_count: number; created_at: string;
+}
+interface DbPromotion {
+  id: string; project_id: string; name: string; name_ar: string | null;
+  type: string | null; value: string | number | null; min_order_amount: string | number | null;
+  start_date: string | null; end_date: string | null; active: boolean; created_at: string;
+}
+
 // ─── Row helpers ───────────────────────────────────────────────────────────
 
 const num = (v: unknown): number =>
@@ -211,12 +328,14 @@ const ts = (v: string | null | undefined): number => (v ? Date.parse(v) : 0);
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
 function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "dokan";
+  return (
+    input
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "dokan"
+  );
 }
 
 async function uniqueSlug(base: string): Promise<string> {
@@ -233,7 +352,7 @@ async function uniqueSlug(base: string): Promise<string> {
   }
 }
 
-function mapProject(r: any): Project {
+function mapProject(r: DbProject): Project {
   return {
     _id: r.id,
     slug: r.slug,
@@ -249,7 +368,7 @@ function mapProject(r: any): Project {
   };
 }
 
-function mapBranch(r: any): Branch {
+function mapBranch(r: DbBranch): Branch {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -261,10 +380,10 @@ function mapBranch(r: any): Branch {
   };
 }
 
-function mapTable(r: any): TableRow {
+function mapTable(r: DbTable): TableRow {
   return {
     _id: r.id,
-    branchId: r.branch_id,
+    branchId: r.branch_id ?? r.project_id,
     projectId: r.project_id,
     name: r.name,
     slug: r.slug,
@@ -272,7 +391,7 @@ function mapTable(r: any): TableRow {
   };
 }
 
-function mapCategory(r: any): Category {
+function mapCategory(r: DbCategory): Category {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -283,7 +402,7 @@ function mapCategory(r: any): Category {
   };
 }
 
-function mapProduct(r: any): Product {
+function mapProduct(r: DbProduct): Product {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -301,7 +420,7 @@ function mapProduct(r: any): Product {
   };
 }
 
-function mapAddon(r: any): Addon {
+function mapAddon(r: DbAddon): Addon {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -313,7 +432,7 @@ function mapAddon(r: any): Addon {
   };
 }
 
-function mapStaff(r: any): StaffMember {
+function mapStaff(r: DbStaff): StaffMember {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -325,7 +444,7 @@ function mapStaff(r: any): StaffMember {
   };
 }
 
-function mapOrder(r: any): Order {
+function mapOrder(r: DbOrder): Order {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -333,24 +452,24 @@ function mapOrder(r: any): Order {
     tableId: r.table_id ?? undefined,
     staffId: r.staff_id ?? undefined,
     orderNumber: r.order_number,
-    orderType: r.order_type,
-    status: r.status,
+    orderType: r.order_type as Order["orderType"],
+    status: r.status as Order["status"],
     subtotal: num(r.subtotal),
     vatAmount: num(r.vat_amount),
     discountAmount: num(r.discount_amount),
     total: num(r.total),
-    paymentMethod: r.payment_method,
-    paymentStatus: r.payment_status,
+    paymentMethod: r.payment_method as Order["paymentMethod"],
+    paymentStatus: r.payment_status as Order["paymentStatus"],
     customerPhone: r.customer_phone ?? undefined,
     customerName: r.customer_name ?? undefined,
     notes: r.notes ?? undefined,
-    source: r.source ?? undefined,
+    source: r.source === null ? undefined : (r.source as Order["source"]),
     items: [],
     _creationTime: ts(r.created_at),
   };
 }
 
-function mapOrderItem(r: any, addons: OrderItemAddon[]): OrderItem {
+function mapOrderItem(r: DbOrderItem, addons: OrderItemAddon[]): OrderItem {
   return {
     _id: r.id,
     orderId: r.order_id,
@@ -365,7 +484,7 @@ function mapOrderItem(r: any, addons: OrderItemAddon[]): OrderItem {
   };
 }
 
-function mapItemAddon(r: any): OrderItemAddon {
+function mapItemAddon(r: DbOrderItemAddon): OrderItemAddon {
   return {
     _id: r.id,
     orderItemId: r.order_item_id,
@@ -376,7 +495,7 @@ function mapItemAddon(r: any): OrderItemAddon {
   };
 }
 
-function mapProgram(r: any): LoyaltyProgram {
+function mapProgram(r: DbLoyaltyProgram): LoyaltyProgram {
   return {
     _id: r.id,
     projectId: r.project_id,
@@ -389,7 +508,7 @@ function mapProgram(r: any): LoyaltyProgram {
   };
 }
 
-function mapStamp(r: any): LoyaltyStamp {
+function mapStamp(r: DbLoyaltyStamp): LoyaltyStamp {
   return {
     _id: r.id,
     programId: r.program_id,
@@ -399,13 +518,13 @@ function mapStamp(r: any): LoyaltyStamp {
   };
 }
 
-function mapPromotion(r: any): Promotion {
+function mapPromotion(r: DbPromotion): Promotion {
   return {
     _id: r.id,
     projectId: r.project_id,
     name: r.name,
     nameAr: r.name_ar ?? undefined,
-    type: r.type,
+    type: r.type as Promotion["type"],
     value: r.value == null ? undefined : num(r.value),
     minOrderAmount: r.min_order_amount == null ? undefined : num(r.min_order_amount),
     active: r.active,
@@ -660,7 +779,9 @@ export const api = {
       const addonsByProduct: Record<string, Addon[]> = {};
       for (const a of (addons.data ?? []).map(mapAddon)) {
         if (!a.isActive) continue;
-        (addonsByProduct[a.productId] ??= []).push(a);
+        const list = addonsByProduct[a.productId] ?? [];
+        list.push(a);
+        addonsByProduct[a.productId] = list;
       }
 
       return {
@@ -677,8 +798,8 @@ export const api = {
       const projectId = await getMyProjectIdRequired();
       const { error } = await supabase.from("categories").insert({
         project_id: projectId,
-        name: args.name,
-        name_ar: args.nameAr,
+        name: String(args.name ?? ""),
+        name_ar: String(args.nameAr ?? ""),
         sort_order: num(args.sortOrder),
         is_active: true,
       });
@@ -686,23 +807,23 @@ export const api = {
       notifyDataChanged();
     },
 
-    updateCategory: async (args: { id: Id<"categories">; name?: string; nameAr?: string; sortOrder?: number }) => {
+    updateCategory: async (args: { id: string; name?: string; nameAr?: string; sortOrder?: number }) => {
       const patch: Record<string, unknown> = {};
-      if (args.name !== undefined) patch.name = args.name;
-      if (args.nameAr !== undefined) patch.name_ar = args.nameAr;
+      if (args.name !== undefined) patch.name = String(args.name);
+      if (args.nameAr !== undefined) patch.name_ar = String(args.nameAr);
       if (args.sortOrder !== undefined) patch.sort_order = args.sortOrder;
       const { error } = await supabase.from("categories").update(patch).eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
     },
 
-    deleteCategory: async (args: { id: Id<"categories"> }) => {
+    deleteCategory: async (args: { id: string }) => {
       const { error } = await supabase.from("categories").delete().eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
     },
 
-    createProduct: async (args: any) => {
+    createProduct: async (args: ProductInput & { name: string; nameAr: string }) => {
       const projectId = await getMyProjectIdRequired();
       const { error } = await supabase.from("products").insert({
         project_id: projectId,
@@ -720,7 +841,7 @@ export const api = {
       notifyDataChanged();
     },
 
-    updateProduct: async (args: any) => {
+    updateProduct: async (args: ProductInput & { id: string }) => {
       const patch: Record<string, unknown> = {};
       if (args.name !== undefined) patch.name = args.name;
       if (args.nameAr !== undefined) patch.name_ar = args.nameAr;
@@ -735,7 +856,7 @@ export const api = {
       notifyDataChanged();
     },
 
-    deleteProduct: async (args: { id: Id<"products"> }) => {
+    deleteProduct: async (args: { id: string }) => {
       const { error } = await supabase.from("products").delete().eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
@@ -758,13 +879,13 @@ export const api = {
       notifyDataChanged();
     },
 
-    deleteBranch: async (args: { id: Id<"branches"> }) => {
+    deleteBranch: async (args: { id: string }) => {
       const { error } = await supabase.from("branches").delete().eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
     },
 
-    createTable: async (args: { branchId: Id<"branches">; name: string }) => {
+    createTable: async (args: { branchId: string; name: string }) => {
       const projectId = await getMyProjectIdRequired();
       const { data: existing } = await supabase
         .from("tables")
@@ -785,14 +906,14 @@ export const api = {
       notifyDataChanged();
     },
 
-    deleteTable: async (args: { id: Id<"tables"> }) => {
+    deleteTable: async (args: { id: string }) => {
       const { error } = await supabase.from("tables").delete().eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
     },
 
     /** Tables with live occupancy — driven by open (pending/preparing) orders. */
-    tablesWithStatus: async () => {
+    tablesWithStatus: async (): Promise<TableWithStatus[]> => {
       const projectId = await getMyProjectId();
       if (!projectId) return [];
 
@@ -819,11 +940,7 @@ export const api = {
       return (tables.data ?? []).map((t) => {
         const s = byTable.get(t.id);
         return {
-          _id: t.id,
-          branchId: t.branch_id,
-          name: t.name,
-          slug: t.slug,
-          isActive: t.is_active,
+          ...mapTable(t),
           occupied: Boolean(s),
           activeOrders: s?.activeOrders ?? [],
           activeTotal: s?.activeTotal ?? 0,
@@ -857,6 +974,30 @@ export const api = {
         pin_code: args.pinCode || null,
         is_active: true,
       });
+      if (error) throw error;
+      notifyDataChanged();
+    },
+
+    updateStaff: async (args: {
+      id: string;
+      fullName?: string;
+      role?: string;
+      pinCode?: string | null;
+      isActive?: boolean;
+    }) => {
+      const patch: Record<string, unknown> = {};
+      if (args.fullName !== undefined) patch.full_name = args.fullName;
+      if (args.role !== undefined) patch.role = args.role;
+      if (args.pinCode !== undefined) patch.pin_code = args.pinCode === null ? null : String(args.pinCode);
+      if (args.isActive !== undefined) patch.is_active = args.isActive;
+      if (Object.keys(patch).length === 0) return;
+      const { error } = await supabase.from("staff_members").update(patch).eq("id", args.id);
+      if (error) throw error;
+      notifyDataChanged();
+    },
+
+    deleteStaff: async (args: { id: string }) => {
+      const { error } = await supabase.from("staff_members").delete().eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
     },
@@ -896,15 +1037,17 @@ export const api = {
           .from("order_item_addons")
           .select("*")
           .in("order_item_id", itemIds);
-        (arows ?? []).forEach((a) => {
-          (addonsByItem.get(a.order_item_id) ?? addonsByItem.set(a.order_item_id, []).get(a.order_item_id)!).push(mapItemAddon(a));
-        });
+        for (const a of arows ?? []) {
+          const list = addonsByItem.get(a.order_item_id) ?? [];
+          list.push(mapItemAddon(a));
+          addonsByItem.set(a.order_item_id, list);
+        }
       }
-      (irows ?? []).forEach((i) => {
-        (itemsByOrder.get(i.order_id) ?? itemsByOrder.set(i.order_id, []).get(i.order_id)!).push(
-          mapOrderItem(i, addonsByItem.get(i.id) ?? []),
-        );
-      });
+      for (const i of irows ?? []) {
+        const list = itemsByOrder.get(i.order_id) ?? [];
+        list.push(mapOrderItem(i, addonsByItem.get(i.id) ?? []));
+        itemsByOrder.set(i.order_id, list);
+      }
 
       return orders.map((o) => ({
         ...mapOrder(o),
@@ -913,14 +1056,14 @@ export const api = {
       }));
     },
 
-    createOrder: async (args: any): Promise<{ orderNumber: string }> => {
+    createOrder: async (args: CreateOrderArgs): Promise<{ orderNumber: string }> => {
       const projectId = await getMyProjectIdRequired();
       const project = await fetchProject(projectId);
 
       // Server-authoritative totals (mirrors the Convex computation)
       let subtotal = 0;
-      const items = (args.items ?? []).map((i: any) => {
-        const addonTotal = (i.addons ?? []).reduce((s: number, a: any) => s + num(a.price), 0);
+      const items: (CartItemArg & { line: number })[] = (args.items ?? []).map((i) => {
+        const addonTotal = (i.addons ?? []).reduce((s, a) => s + num(a.price), 0);
         const line = (num(i.unitPrice) + addonTotal) * num(i.quantity);
         subtotal += line;
         return { ...i, line };
@@ -952,7 +1095,7 @@ export const api = {
         .single();
       if (error) throw error;
 
-      const itemRows = items.map((i: any) => ({
+      const itemRows = items.map((i) => ({
         order_id: order.id,
         product_id: i.productId ?? null,
         product_name: i.name,
@@ -969,7 +1112,7 @@ export const api = {
       if (itemsError) throw itemsError;
 
       const addonRows: Record<string, unknown>[] = [];
-      items.forEach((i: any, idx: number) => {
+      items.forEach((i, idx) => {
         for (const a of i.addons ?? []) {
           addonRows.push({
             order_item_id: insertedItems[idx].id,
@@ -989,7 +1132,7 @@ export const api = {
       return { orderNumber: order.order_number };
     },
 
-    updateOrderStatus: async (args: { orderId: Id<"orders">; status: string }) => {
+    updateOrderStatus: async (args: { orderId: string; status: string }) => {
       const { error } = await supabase
         .from("orders")
         .update({ status: args.status })
@@ -998,7 +1141,7 @@ export const api = {
       notifyDataChanged();
     },
 
-    payOrder: async (args: { orderId: Id<"orders"> }) => {
+    payOrder: async (args: { orderId: string }) => {
       const { error } = await supabase
         .from("orders")
         .update({ payment_status: "paid" })
@@ -1075,7 +1218,58 @@ export const api = {
       return (data ?? []).map(mapProgram);
     },
 
-    listLoyaltyStamps: async (args: any): Promise<LoyaltyStamp[] | undefined> => {
+    createLoyaltyProgram: async (args: {
+      name: string;
+      nameAr?: string;
+      stampTarget?: number;
+      rewardName?: string;
+      rewardNameAr?: string;
+    }) => {
+      const projectId = await getMyProjectIdRequired();
+      const { error } = await supabase.from("loyalty_programs").insert({
+        project_id: projectId,
+        name: args.name,
+        name_ar: args.nameAr ?? null,
+        stamp_target: args.stampTarget ?? 9,
+        reward_name: args.rewardName ?? null,
+        reward_name_ar: args.rewardNameAr ?? null,
+        active: true,
+      });
+      if (error) throw error;
+      notifyDataChanged();
+    },
+
+    updateLoyaltyProgram: async (args: {
+      id: string;
+      name?: string;
+      nameAr?: string;
+      stampTarget?: number;
+      rewardName?: string;
+      rewardNameAr?: string;
+      active?: boolean;
+    }) => {
+      const patch: Record<string, unknown> = {};
+      if (args.name !== undefined) patch.name = args.name;
+      if (args.nameAr !== undefined) patch.name_ar = args.nameAr;
+      if (args.stampTarget !== undefined) patch.stamp_target = args.stampTarget;
+      if (args.rewardName !== undefined) patch.reward_name = args.rewardName;
+      if (args.rewardNameAr !== undefined) patch.reward_name_ar = args.rewardNameAr;
+      if (args.active !== undefined) patch.active = args.active;
+      if (Object.keys(patch).length === 0) return;
+      const { error } = await supabase.from("loyalty_programs").update(patch).eq("id", args.id);
+      if (error) throw error;
+      notifyDataChanged();
+    },
+
+    deleteLoyaltyProgram: async (args: { id: string }) => {
+      const { error } = await supabase.from("loyalty_programs").delete().eq("id", args.id);
+      if (error) throw error;
+      notifyDataChanged();
+    },
+
+    listLoyaltyStamps: async (
+      args: { programId: string } | "skip" | undefined,
+    ): Promise<LoyaltyStamp[] | undefined> => {
       if (args === "skip" || !args?.programId) return undefined;
       const { data, error } = await supabase
         .from("loyalty_stamps")
@@ -1119,7 +1313,7 @@ export const api = {
       notifyDataChanged();
     },
 
-    deletePromotion: async (args: { id: Id<"promotions"> }) => {
+    deletePromotion: async (args: { id: string }) => {
       const { error } = await supabase.from("promotions").delete().eq("id", args.id);
       if (error) throw error;
       notifyDataChanged();
@@ -1128,7 +1322,9 @@ export const api = {
 
   public: {
     /** Bilingual menu for the QR experience (anon reads via RLS). */
-    getPublicMenu: async (args: any): Promise<PublicMenu | null | undefined> => {
+    getPublicMenu: async (
+      args: { projectSlug: string; tableSlug?: string } | "skip" | undefined,
+    ): Promise<PublicMenu | null | undefined> => {
       if (args === "skip" || !args?.projectSlug) return undefined;
 
       const { data: project, error: pErr } = await supabase
@@ -1166,7 +1362,9 @@ export const api = {
       const addonsByProduct: Record<string, Addon[]> = {};
       for (const a of (addons.data ?? []).map(mapAddon)) {
         if (!a.isActive) continue;
-        (addonsByProduct[a.productId] ??= []).push(a);
+        const list = addonsByProduct[a.productId] ?? [];
+        list.push(a);
+        addonsByProduct[a.productId] = list;
       }
 
       return {
@@ -1187,7 +1385,7 @@ export const api = {
       tableSlug: string;
       customerName?: string;
       customerPhone?: string;
-      items: any[];
+      items?: CartItemArg[];
     }): Promise<{ orderNumber: string }> => {
       const { data: project } = await supabase
         .from("projects")
@@ -1208,8 +1406,8 @@ export const api = {
       if (!table) throw new Error("Table not found.");
 
       let subtotal = 0;
-      const items = (args.items ?? []).map((i: any) => {
-        const addonTotal = (i.addons ?? []).reduce((s: number, a: any) => s + num(a.price), 0);
+      const items: (CartItemArg & { line: number })[] = (args.items ?? []).map((i) => {
+        const addonTotal = (i.addons ?? []).reduce((s, a) => s + num(a.price), 0);
         const line = (num(i.unitPrice) + addonTotal) * num(i.quantity);
         subtotal += line;
         return { ...i, line };
@@ -1240,7 +1438,7 @@ export const api = {
         .single();
       if (error) throw error;
 
-      const itemRows = items.map((i: any) => ({
+      const itemRows = items.map((i) => ({
         order_id: order.id,
         product_id: i.productId ?? null,
         product_name: i.name,
@@ -1256,7 +1454,7 @@ export const api = {
       if (itemsError) throw itemsError;
 
       const addonRows: Record<string, unknown>[] = [];
-      items.forEach((i: any, idx: number) => {
+      items.forEach((i, idx) => {
         for (const a of i.addons ?? []) {
           addonRows.push({
             order_item_id: insertedItems[idx].id,

@@ -9,7 +9,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectTrigger, SelectValue, SelectItem, SelectContent } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Plus, Pencil, Trash2 } from "lucide-react";
-import type { Id } from "@/lib/api";
+import type { Category, Id, Product } from "@/lib/api";
+
+type ProductFormData = {
+  name: string;
+  nameAr: string;
+  categoryId: string;
+  price: string;
+  description: string;
+  descriptionAr: string;
+  isAvailable: boolean;
+};
 
 export default function Products() {
   const catalog = useQuery(api.catalog.posCatalog);
@@ -17,13 +27,13 @@ export default function Products() {
   const updateProduct = useMutation(api.catalog.updateProduct);
   const deleteProduct = useMutation(api.catalog.deleteProduct);
   const { t, lang } = useI18n();
-  const [editing, setEditing] = useState<any>(null);
+  const [editing, setEditing] = useState<Product | null>(null);
   const [open, setOpen] = useState(false);
 
   const products = catalog?.products ?? [];
   const categories = catalog?.categories ?? [];
 
-  const handleSave = async (formData: any) => {
+  const handleSave = async (formData: ProductFormData) => {
     if (editing?._id) {
       await updateProduct({ id: editing._id, ...formData });
     } else {
@@ -111,13 +121,36 @@ export default function Products() {
   );
 }
 
-function ProductForm({ categories, initial, onSave, lang }: any) {
-  const [data, setData] = useState(initial || {
-    name: "", nameAr: "", categoryId: "", price: "",
-    description: "", descriptionAr: "", isAvailable: true,
-  });
+function ProductForm({ categories, initial, onSave, lang }: {
+  categories: Category[];
+  initial: Product | null;
+  onSave: (data: ProductFormData) => void;
+  lang: string;
+}) {
+  const [data, setData] = useState<ProductFormData>(() =>
+    initial
+      ? {
+          name: initial.name,
+          nameAr: initial.nameAr,
+          categoryId: initial.categoryId ?? "",
+          price: String(initial.price),
+          description: initial.description ?? "",
+          descriptionAr: initial.descriptionAr ?? "",
+          isAvailable: initial.isAvailable,
+        }
+      : {
+          name: "",
+          nameAr: "",
+          categoryId: "",
+          price: "",
+          description: "",
+          descriptionAr: "",
+          isAvailable: true,
+        },
+  );
 
-  const handle = (field: string, value: any) => setData((d: any) => ({ ...d, [field]: value }));
+  const handle = (field: keyof ProductFormData, value: string | boolean) =>
+    setData((d) => ({ ...d, [field]: value }));
 
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(data); }} className="space-y-4">
@@ -129,7 +162,7 @@ function ProductForm({ categories, initial, onSave, lang }: any) {
         <Select value={data.categoryId} onValueChange={(v) => handle("categoryId", v)}>
           <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
           <SelectContent>
-            {categories.map((c: any) => (
+            {categories.map((c) => (
               <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
             ))}
           </SelectContent>

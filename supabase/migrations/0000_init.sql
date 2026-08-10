@@ -539,6 +539,52 @@ create trigger trigger_loyalty_stamp
   after insert or update of payment_status on public.orders
   for each row execute function public.award_loyalty_stamp();
 
+-- Order status state machine: pending -> preparing -> ready -> delivered,
+-- with cancellation allowed from any non-terminal state. Delivered is final.
+-- Guards against invalid transitions (e.g. delivered -> pending).
+create or replace function public.validate_order_status()
+returns trigger
+language plpgsql
+as $$
+declare
+  rank_old int;
+  rank_new int;
+begin
+  if old.status = new.status then
+    return new;
+  end if;
+
+  -- Delivered is terminal.
+  if old.status = 'delivered' then
+    raise exception 'Order % cannot change status from delivered', old.order_number;
+  end if;
+
+  -- Cancellation is allowed from any non-terminal state and is itself terminal.
+  if new.status = 'cancelled' then
+    if old.status in ('pending', 'preparing', 'ready') then
+      return new;
+    end if;
+    raise exception 'Order % cannot be cancelled from %', old.order_number, old.status;
+  end if;
+
+  select case old.status when 'pending' then 1 when 'preparing' then 2 when 'ready' then 3 when 'delivered' then 4 else 0 end
+  into rank_old;
+  select case new.status when 'pending' then 1 when 'preparing' then 2 when 'ready' then 3 when 'delivered' then 4 else 0 end
+  into rank_new;
+
+  if rank_new <= rank_old then
+    raise exception 'Invalid order status transition % -> % for order %', old.status, new.status, old.order_number;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trigger_order_status_guard on public.orders;
+create trigger trigger_order_status_guard
+  before update of status on public.orders
+  for each row execute function public.validate_order_status();
+
 -- ============================================================================
 -- Realtime (orders drive the KDS, POS table occupancy, and live lists)
 -- ============================================================================
