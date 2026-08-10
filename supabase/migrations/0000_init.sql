@@ -32,6 +32,45 @@ $$;
 
 grant execute on function public.is_staff(uuid) to authenticated, anon;
 
+-- Staff count for a project (SECURITY DEFINER so it can be used safely in
+-- policies without recursion). Used to gate owner-role creation.
+create or replace function public.staff_count(p_project_id uuid)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+begin
+  return (
+    select count(*) from public.staff_members where project_id = p_project_id
+  );
+end;
+$$;
+
+grant execute on function public.staff_count(uuid) to authenticated, anon;
+
+-- Is the signed-in user an owner of this project?
+create or replace function public.is_owner(p_project_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+begin
+  return exists (
+    select 1 from public.staff_members
+    where project_id = p_project_id
+      and user_id = auth.uid()
+      and role = 'owner'
+      and is_active = true
+  );
+end;
+$$;
+
+grant execute on function public.is_owner(uuid) to authenticated, anon;
+
 -- ----------------------------------------------------------------------------
 -- Projects (tenants)
 -- ----------------------------------------------------------------------------
@@ -164,7 +203,8 @@ create table if not exists public.orders (
   idempotency_key text unique,
   source text check (source in ('pos','qr-menu')),
   created_at timestamptz default now(),
-  updated_at timestamptz default now()
+  updated_at timestamptz default now(),
+  unique (project_id, order_number)
 );
 
 create index if not exists orders_project_idx on public.orders (project_id);
@@ -278,9 +318,16 @@ create policy "projects_staff_update" on public.projects
 -- Staff members: staff read their project; owner/manager manage; owner self-register
 create policy "staff_select" on public.staff_members
   for select to authenticated using (is_staff(project_id));
+-- Owner rows can only be created during onboarding (first owner of an empty
+-- project) or by an existing owner (co-owner). This prevents any staff member
+-- from silently promoting themselves to owner.
 create policy "staff_insert_owner" on public.staff_members
   for insert to authenticated
-  with check (user_id = auth.uid() and role = 'owner');
+  with check (
+    role = 'owner'
+    and user_id = auth.uid()
+    and (public.staff_count(project_id) = 0 or public.is_owner(project_id))
+  );
 create policy "staff_insert_managed" on public.staff_members
   for insert to authenticated
   with check (is_staff(project_id) and role in ('manager','cashier','kitchen'));
@@ -358,6 +405,12 @@ create policy "items_anon_insert" on public.order_items
   for insert to anon with check (
     exists (select 1 from public.orders o where o.id = order_id and o.source = 'qr-menu')
   );
+-- RLS applies to subqueries inside policies, so anonymous guests need SELECT
+-- on order_items (scoped to QR-menu orders) for the addon insert policy below.
+create policy "items_anon_select" on public.order_items
+  for select to anon using (
+    exists (select 1 from public.orders o where o.id = order_id and o.source = 'qr-menu')
+  );
 
 -- Order item addons
 create policy "oia_staff_select" on public.order_item_addons
@@ -378,6 +431,14 @@ create policy "oia_staff_insert" on public.order_item_addons
   );
 create policy "oia_anon_insert" on public.order_item_addons
   for insert to anon with check (
+    exists (
+      select 1 from public.order_items oi
+      join public.orders o on o.id = oi.order_id
+      where oi.id = order_item_id and o.source = 'qr-menu'
+    )
+  );
+create policy "oia_anon_select" on public.order_item_addons
+  for select to anon using (
     exists (
       select 1 from public.order_items oi
       join public.orders o on o.id = oi.order_id
@@ -409,6 +470,12 @@ as $$
 declare
   next_num int;
 begin
+  -- Serialize order-number generation per project so concurrent inserts
+  -- (multiple POS terminals / QR guests at the same time) can't produce
+  -- duplicate numbers. The unique (project_id, order_number) constraint is
+  -- the safety net behind this lock.
+  perform pg_advisory_xact_lock(hashtext(new.project_id::text));
+
   select coalesce(max(cast(substring(order_number from 2) as int)), 0) + 1
   into next_num
   from public.orders

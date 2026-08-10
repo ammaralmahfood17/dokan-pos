@@ -197,6 +197,8 @@ export interface PublicMenu {
   categories: Category[];
   products: Product[];
   addonsByProduct: Record<string, Addon[]>;
+  /** Resolved table name for the QR table, when a tableSlug was provided. */
+  tableName?: string;
 }
 
 // ─── Row helpers ───────────────────────────────────────────────────────────
@@ -1138,6 +1140,20 @@ export const api = {
       if (pErr) throw pErr;
       if (!project) return null;
 
+      // Resolve the QR table name so the header can show "Table 4" instead of
+      // the raw slug from the URL.
+      let tableName: string | undefined;
+      if (args.tableSlug) {
+        const { data: table } = await supabase
+          .from("tables")
+          .select("name")
+          .eq("project_id", project.id)
+          .eq("slug", args.tableSlug)
+          .eq("is_active", true)
+          .maybeSingle();
+        tableName = table?.name ?? undefined;
+      }
+
       const [categories, products, addons] = await Promise.all([
         supabase.from("categories").select("*").eq("project_id", project.id).order("sort_order"),
         supabase.from("products").select("*").eq("project_id", project.id).order("name"),
@@ -1161,6 +1177,7 @@ export const api = {
           .sort((a, b) => a.sortOrder - b.sortOrder),
         products: (products.data ?? []).map(mapProduct).filter((p) => p.isActive),
         addonsByProduct,
+        tableName,
       };
     },
 

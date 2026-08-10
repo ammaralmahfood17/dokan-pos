@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { ShoppingCart, Plus, Minus, Trash2, Phone, Bell, CheckCircle } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Trash2, Phone, Bell, CheckCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useParams } from "react-router";
 
@@ -17,10 +17,11 @@ export default function PublicMenu() {
   const { projectSlug, tableSlug } = useParams<{ projectSlug: string; tableSlug: string }>();
   const menu = useQuery(
     api.public.getPublicMenu,
-    projectSlug ? { projectSlug } : "skip",
+    projectSlug && tableSlug ? { projectSlug, tableSlug } : "skip",
   );
   const createOrder = useMutation(api.public.createPublicOrder);
   const { t, lang } = useI18n();
+  const [placing, setPlacing] = useState(false);
 
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<any[]>([]);
@@ -62,7 +63,8 @@ export default function PublicMenu() {
   const cartCount = cart.reduce((s: number, i: any) => s + i.quantity, 0);
 
   const handlePlace = async () => {
-    if (!projectSlug || !tableSlug) return;
+    if (!projectSlug || !tableSlug || placing) return;
+    setPlacing(true);
     try {
       const result = await createOrder({
         projectSlug,
@@ -82,13 +84,27 @@ export default function PublicMenu() {
       setCart([]);
     } catch (err) {
       toast.error(String(err));
+    } finally {
+      setPlacing(false);
     }
   };
 
-  if (!menu) {
+  if (menu === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="animate-pulse text-sm text-muted-foreground">Loading menu...</div>
+      </div>
+    );
+  }
+
+  if (menu === null) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center">
+        <h1 className="text-xl font-bold tracking-tight">Menu not found</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This restaurant isn't accepting QR orders right now. Please scan the
+          QR code again or ask a staff member for help.
+        </p>
       </div>
     );
   }
@@ -118,7 +134,7 @@ export default function PublicMenu() {
               {displayLang === "ar" && project?.nameAr ? project.nameAr : project?.name}
             </h1>
             <p className="text-xs text-muted-foreground">
-              {t("menu.table")} {tableSlug}
+              {t("menu.table")} {menu.tableName ?? tableSlug}
             </p>
           </div>
           <Sheet>
@@ -191,8 +207,14 @@ export default function PublicMenu() {
                     onChange={(e) => setCustomerName(e.target.value)} />
                   <Input placeholder={t("pos.customerPhone")} value={customerPhone}
                     onChange={(e) => setCustomerPhone(e.target.value)} />
-                  <Button className="w-full min-h-11" onClick={handlePlace}>
-                    {t("menu.placeOrder")} · {formatBHD(subtotal, displayLang)}
+                  <Button className="w-full min-h-11" onClick={handlePlace} disabled={placing}>
+                    {placing ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <>
+                        {t("menu.placeOrder")} · {formatBHD(subtotal, displayLang)}
+                      </>
+                    )}
                   </Button>
                 </div>
               )}

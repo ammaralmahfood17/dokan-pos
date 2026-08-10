@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useMutation, useQuery } from "@/lib/react-query";
 import { api } from "@/lib/api";
-import { usePosCatalog } from "@/hooks/use-workspace";
+import { usePosCatalog, useWorkspace } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
 import { useStaff } from "@/hooks/use-staff";
 import { useI18n } from "@/lib/i18n";
@@ -18,7 +18,7 @@ import {
 import { toast } from "sonner";
 import {
   Plus, Minus, Trash2, Search, Utensils, Package, Bike,
-  Banknote, CreditCard, QrCode, Percent,
+  Banknote, CreditCard, QrCode, Percent, Loader2,
 } from "lucide-react";
 import type { Id } from "@/lib/api";
 
@@ -36,11 +36,13 @@ interface CartItem {
 // ─── Component ───────────────────────────────────────────
 export default function POS() {
   const catalog = usePosCatalog();
+  const workspace = useWorkspace();
   const createOrder = useMutation(api.orders.createOrder);
   const tablesWithStatus = useQuery(api.operations.tablesWithStatus);
   const online = useOnline();
   const { staffId } = useStaff();
   const { t, lang } = useI18n();
+  const [submitting, setSubmitting] = useState(false);
 
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -115,12 +117,17 @@ export default function POS() {
     const addonTotal = i.addons.reduce((a, a2) => a + a2.price, 0);
     return s + (i.unitPrice + addonTotal) * i.quantity;
   }, 0);
-  const vat = Math.max(0, (subtotal - discount) * 0.1);
+  // Use the workspace VAT rate so what's shown matches what createOrder stores
+  // (the backend computes totals from the project's vat_rate, not a hardcoded 10%).
+  const vatRate = workspace?.project?.vatRate ?? 0.1;
+  const vat = Math.max(0, (subtotal - discount) * vatRate);
   const total = Math.max(0, subtotal - discount + vat);
 
   const selectedTableName = tablesWithStatus?.find((tb) => tb._id === selectedTable)?.name;
 
   const handleConfirm = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     const items = cart.map((i) => ({
       productId: i.productId,
       name: i.name,
@@ -147,6 +154,7 @@ export default function POS() {
       addToQueue(payload);
       toast(t("pos.orderPlaced"));
       setCart([]);
+      setSubmitting(false);
       return;
     }
 
@@ -164,6 +172,8 @@ export default function POS() {
       setCustomerPhone("");
     } catch (err) {
       toast.error(String(err));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -425,7 +435,7 @@ export default function POS() {
               </div>
             )}
             <div className="flex justify-between text-muted-foreground">
-              <span>{t("pos.vat")} (10%)</span>
+              <span>{t("pos.vat")} ({Math.round(vatRate * 100)}%)</span>
               <span className="font-mono">{formatBHD(vat, lang)}</span>
             </div>
             <Separator className="my-1" />
@@ -599,8 +609,14 @@ export default function POS() {
               <p className="text-2xl font-bold font-mono">{formatBHD(total, lang)}</p>
             </div>
 
-            <Button className="w-full min-h-11" onClick={handleConfirm}>
-              {paymentMethod === "cash" ? t("pos.payNow") : t("pos.confirmOrder")}
+            <Button className="w-full min-h-11" onClick={handleConfirm} disabled={submitting}>
+              {submitting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : paymentMethod === "cash" ? (
+                t("pos.payNow")
+              ) : (
+                t("pos.confirmOrder")
+              )}
             </Button>
           </div>
         </DialogContent>

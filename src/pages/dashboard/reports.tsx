@@ -1,8 +1,7 @@
 import { useQuery } from "@/lib/react-query";
 import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-import { formatBHD, formatDate } from "@/lib/format";
-import { BarChart3 } from "lucide-react";
+import { formatBHD } from "@/lib/format";
 
 export default function Reports() {
   const stats = useQuery(api.dashboard.todayStats);
@@ -10,8 +9,6 @@ export default function Reports() {
   const { t, lang } = useI18n();
 
   const totalRevenue = (allOrders ?? []).reduce((s, o) => s + o.total, 0);
-  const totalPaid = (allOrders ?? []).filter((o) => o.paymentStatus === "paid")
-    .reduce((s, o) => s + o.total, 0);
 
   return (
     <div>
