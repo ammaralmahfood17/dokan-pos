@@ -50,23 +50,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return;
     }
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        setSession(data.session);
-        setIsLoading(false);
-      })
-      .catch((err) => {
-        console.error("[dokan] failed to load session:", err);
-        setIsLoading(false);
-      });
+    let cancelled = false;
+    const finish = (s: Session | null) => {
+      if (cancelled) return;
+      setSession(s);
+      setIsLoading(false);
+    };
+
+    // Handle email magic-link / OTP redirect tokens embedded in the URL hash
+    // (#access_token=...&refresh_token=...). Users can either click the link in
+    // the email or type the 6-digit code — both sign in the same session.
+    const hash = window.location.hash;
+    if (hash.includes("access_token=")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search,
+      );
+      if (accessToken && refreshToken) {
+        supabase.auth
+          .setSession({ access_token: accessToken, refresh_token: refreshToken })
+          .then(({ data }) => finish(data.session))
+          .catch((err) => {
+            console.error("[dokan] failed to exchange session:", err);
+            finish(null);
+          });
+      } else {
+        finish(null);
+      }
+    } else {
+      supabase.auth
+        .getSession()
+        .then(({ data }) => finish(data.session))
+        .catch((err) => {
+          console.error("[dokan] failed to load session:", err);
+          finish(null);
+        });
+    }
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
       // Auth affects every project-scoped query.
       notifyDataChanged();
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const signIn = useCallback(async (provider: string, formData?: FormData) => {
