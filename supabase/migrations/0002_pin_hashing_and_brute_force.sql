@@ -19,6 +19,10 @@
 --  • set_staff_pin() (security definer) writes or clears the hash and may
 --    only be called by an owner/manager of the staff member's project.
 --
+--  • staff_view (safe columns + has_pin only) is created here — it references
+--    pin_hash, so it can only be defined after this migration adds the
+--    column (0001 must not create it).
+--
 -- Apply in order: 0000 → 0001 → 0002.
 -- ============================================================================
 
@@ -29,6 +33,27 @@ create extension if not exists pgcrypto with schema extensions;
 alter table public.staff_members add column if not exists pin_hash text;
 alter table public.staff_members drop column if exists pin_code;
 drop index if exists public.idx_staff_pin;
+
+-- ─── Staff view (safe columns + has_pin) ────────────────────────────────────
+-- Created here (not in 0001) because it references pin_hash, which only this
+-- migration adds. security_invoker: RLS of staff_members still applies per
+-- row; pin_hash is never exposed, so even a staff member's direct SELECT
+-- cannot read the hash.
+
+create or replace view public.staff_view
+with (security_invoker = true) as
+select
+  s.id,
+  s.project_id,
+  s.user_id,
+  s.full_name,
+  s.role,
+  s.is_active,
+  s.created_at,
+  (s.pin_hash is not null) as has_pin
+from public.staff_members s;
+
+grant select on public.staff_view to anon, authenticated;
 
 -- ─── Attempt tracking (deny by default: no RLS policies) ────────────────────
 

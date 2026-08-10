@@ -37,7 +37,9 @@
 --
 --  6. staff_members column privileges are narrowed: pin_hash is neither
 --     selectable nor writable by any client role. The app reads staff through
---     the security-invoker view staff_view (safe columns + has_pin only).
+--     the security-invoker view staff_view (safe columns + has_pin only),
+--     which is created in 0002 because it references the pin_hash column
+--     that only 0002 adds.
 --
 -- Apply in order: 0000 → 0001 → 0002. This file is re-runnable (DROP POLICY
 -- IF EXISTS / CREATE OR REPLACE), but note that dropping `projects_insert`
@@ -902,28 +904,12 @@ create policy "order_item_addons_delete" on public.order_item_addons
     )
   );
 
--- ─── Staff view (safe columns + has_pin) + column-level grants ──────────────
--- security_invoker: RLS of staff_members still applies per row. pin_hash is
--- never exposed here, so even a staff member's direct SELECT cannot read it.
-
-create or replace view public.staff_view
-with (security_invoker = true) as
-select
-  s.id,
-  s.project_id,
-  s.user_id,
-  s.full_name,
-  s.role,
-  s.is_active,
-  s.created_at,
-  (s.pin_hash is not null) as has_pin
-from public.staff_members s;
-
-grant select on public.staff_view to anon, authenticated;
-
+-- ─── Column-level grants on staff_members ───────────────────────────────────
 -- pin_hash is neither selectable nor writable by any client role; the staff
 -- table's remaining columns are granted explicitly (defense in depth on top
--- of the row-level policies above).
+-- of the row-level policies above). The `staff_view` (safe columns +
+-- has_pin) is created in 0002, immediately after that migration adds the
+-- pin_hash column it references.
 revoke all on public.staff_members from anon, authenticated;
 grant select (id, project_id, user_id, full_name, role, is_active, created_at) on public.staff_members to anon, authenticated;
 grant insert (project_id, user_id, full_name, role, is_active) on public.staff_members to anon, authenticated;
