@@ -3,6 +3,7 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { usePosCatalog } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
+import { useStaff } from "@/hooks/use-staff";
 import { useI18n } from "@/lib/i18n";
 import { formatBHD } from "@/lib/format";
 import { addToQueue } from "@/lib/offline";
@@ -37,6 +38,7 @@ export default function POS() {
   const catalog = usePosCatalog();
   const createOrder = useMutation(api.orders.createOrder);
   const online = useOnline();
+  const { staffId } = useStaff();
   const { t, lang } = useI18n();
 
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -123,11 +125,14 @@ export default function POS() {
       orderType,
       paymentMethod,
       paymentStatus: (paymentMethod === "cash" ? "paid" : "pending") as "paid" | "pending",
+      staffId: staffId,
       customerName: customerName || undefined,
       customerPhone: customerPhone || undefined,
       discountAmount: discount || 0,
       items,
     };
+
+    console.log({ payload, staffId });
 
     if (!online) {
       addToQueue(payload);

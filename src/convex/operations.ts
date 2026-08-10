@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { requireProjectId } from "./membership";
 
 // ---------------------------------------------------------------------------
@@ -116,6 +116,18 @@ export const deleteTable = mutation({
 // ---------------------------------------------------------------------------
 // Staff
 // ---------------------------------------------------------------------------
+
+export const getStaffByPin = query({
+  args: { pinCode: v.string() },
+  handler: async (ctx, { pinCode }) => {
+    const projectId = await requireProjectId(ctx);
+    const staff = await ctx.db
+      .query("staffMembers")
+      .withIndex("by_project", (q: any) => q.eq("projectId", projectId))
+      .collect();
+    return staff.find((s) => s.isActive && s.pinCode === pinCode) ?? null;
+  },
+});
 
 export const createStaff = mutation({
   args: {

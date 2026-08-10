@@ -1,9 +1,10 @@
-import { LayoutDashboard, LogOut, Menu, QrCode, ShoppingCart, Store, Users, Coffee, Settings, Gift, Tag, BarChart3, Loader2, Radio, Bike, UserX } from "lucide-react";
+import { LayoutDashboard, LogOut, Menu, QrCode, ShoppingCart, Store, Users, Coffee, Settings, Gift, Tag, BarChart3, Loader2, Radio, Bike, UserCheck, X, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { useWorkspace } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
+import { useStaff, StaffProvider } from "@/hooks/use-staff";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -11,8 +12,17 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function DashboardShell() {
+  return (
+    <StaffProvider>
+      <DashboardInner />
+    </StaffProvider>
+  );
+}
+
+function DashboardInner() {
   const workspace = useWorkspace();
   const { user, signOut } = useAuth();
+  const { staff, staffId, isLoggedIn, openLogin, logout } = useStaff();
   const online = useOnline();
   const navigate = useNavigate();
   const location = useLocation();
@@ -152,6 +162,29 @@ export default function DashboardShell() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* PIN-based cashier login */}
+            {isLoggedIn && staff ? (
+              <button
+                type="button"
+                onClick={logout}
+                className="flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-[11px] font-medium transition-colors hover:bg-secondary hover:text-destructive"
+                title="Log out cashier"
+              >
+                <span className="size-1.5 rounded-full bg-emerald-500" />
+                {staff.fullName}
+                <X className="size-3" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={openLogin}
+                className="flex items-center gap-1.5 rounded-sm border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                <UserCheck className="size-3" />
+                Sign in as cashier
+              </button>
+            )}
+
             {/* Language toggle */}
             <button
               type="button"
