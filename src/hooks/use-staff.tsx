@@ -64,8 +64,8 @@ export function StaffProvider({ children }: { children: React.ReactNode }) {
     setStoredId(id);
   };
 
-  const handleSubmitPin = async () => {
-    const code = pin.join("");
+  const handleSubmitPin = async (codeOverride?: string) => {
+    const code = codeOverride ?? pin.join("");
     if (code.length < 4) return;
     setLoading(true);
     setError(null);
@@ -128,21 +128,17 @@ export function StaffProvider({ children }: { children: React.ReactNode }) {
                   const next = [...pin];
                   next[i] = val;
                   setPin(next);
-                  // Auto-advance
+                  // Auto-advance to the next box
                   if (val && i < 3) {
                     const nextInput = document.querySelector<HTMLInputElement>(
                       `[data-pin-idx="${i + 1}"]`,
                     );
                     nextInput?.focus();
                   }
-                  // Auto-submit on 4 digits
-                  if (val && i === 2) {
-                    setTimeout(() => {
-                      const last = document.querySelector<HTMLInputElement>(
-                        `[data-pin-idx="3"]`,
-                      );
-                      last?.focus();
-                    }, 50);
+                  // Auto-submit once the 4th digit is entered (use the local
+                  // `next` value — `pin` in this closure is still stale).
+                  if (val && i === 3) {
+                    setTimeout(() => handleSubmitPin(next.join("")), 80);
                   }
                 }}
                 onKeyDown={(e) => {
@@ -173,7 +169,7 @@ export function StaffProvider({ children }: { children: React.ReactNode }) {
           <Button
             className="w-full min-h-11"
             disabled={pin.some((d) => !d) || loading}
-            onClick={handleSubmitPin}
+            onClick={() => handleSubmitPin()}
           >
             {loading ? (
               <Loader2 className="size-4 animate-spin" />

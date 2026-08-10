@@ -22,7 +22,7 @@ Dokan has **no Node server** — it's a client-only Vite app, so the backend is:
 
 ## Setup (Supabase)
 
-1. **Run the migration** — open `supabase/migrations/0000_init.sql` in the Supabase SQL editor and run it (or `supabase db push`). It creates all tables, RLS policies, the order-number trigger, the loyalty-stamp trigger, and adds `orders` to the realtime publication.
+1. **Run the migration** — open `supabase/migrations/0000_init.sql` in the Supabase SQL editor and run it (or `supabase db push`). It creates all tables (projects, staff_members, branches, tables, categories, products, addons, orders, order_items, order_item_addons, loyalty_programs, loyalty_stamps, promotions), RLS policies, the per-project order-number trigger, the loyalty-stamp trigger, and adds `orders` to the realtime publication. The file is re-runnable — if a first run fails part-way, just run it again.
 2. **Enable auth providers** — Supabase Dashboard → Authentication → Providers:
    - **Email** → turn on, disable "Confirm email" (we use email OTP).
    - **Anonymous sign-ins** → turn on (guest demo login).
@@ -31,6 +31,12 @@ Dokan has **no Node server** — it's a client-only Vite app, so the backend is:
    - `VITE_SUPABASE_ANON_KEY` = the anon / public key
 
 The app shows a setup banner on `/auth` until the keys are present.
+
+### Troubleshooting
+
+- **`relation "public.staff_members" does not exist` (SQLSTATE 42P01)** — the schema was never applied. Run `supabase/migrations/0000_init.sql` in the Supabase SQL editor and confirm all 15 statements report success (you'll see `Success. No rows returned` per table). This is the #1 cause of every page erroring with 42P01.
+- **`permission denied for table ...`** — RLS is working but you're signed in as a user with no `staff_members` row. Finish onboarding, or sign in with the owner email.
+- **KDS/POS not updating across devices** — confirm `orders` shows under Supabase → Database → Publications → `supabase_realtime` (the migration adds it automatically).
 
 ## Auth
 
