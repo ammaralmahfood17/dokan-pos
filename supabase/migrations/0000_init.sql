@@ -7,20 +7,27 @@
 -- ----------------------------------------------------------------------------
 -- RLS helper: is the signed-in user an active staff member of this project?
 -- SECURITY DEFINER so the check bypasses RLS (avoids recursion).
+-- NOTE: this is plpgsql (not sql) because it is created BEFORE the tables it
+-- reads — plpgsql bodies are only parsed when the function first runs.
 -- ----------------------------------------------------------------------------
 create or replace function public.is_staff(p_project_id uuid)
 returns boolean
-language sql
+language plpgsql
 security definer
 set search_path = public
 stable
 as $$
-  select exists (
+begin
+  if exists (
     select 1 from public.staff_members
     where project_id = p_project_id
       and user_id = auth.uid()
       and is_active = true
-  );
+  ) then
+    return true;
+  end if;
+  return false;
+end;
 $$;
 
 grant execute on function public.is_staff(uuid) to authenticated, anon;
