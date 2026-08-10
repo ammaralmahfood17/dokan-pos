@@ -1,14 +1,27 @@
 /**
  * Dokan data layer — Supabase.
  *
- * Every function in this module maps a Convex-style API the UI already
- * consumes (`api.catalog.posCatalog`, `api.orders.createOrder`, ...) onto
- * Supabase (Postgres + RLS + Realtime). Row mappers convert snake_case
- * columns to the camelCase shapes the pages expect (`_id`, `nameAr`, ...).
+ * Every function maps a Convex-style API the UI consumes
+ * (`api.catalog.posCatalog`, `api.orders.createOrder`, ...) onto Supabase
+ * (Postgres + RLS + Realtime). Row mappers convert snake_case columns to the
+ * camelCase shapes the pages expect (`_id`, `nameAr`, ...).
  *
- * RLS in `supabase/migrations/0000_init.sql` scopes every query to the
- * signed-in user's project, so project_id is derived here from the user's
- * staff membership rather than passed from the client.
+ * RLS in `supabase/migrations/0000_init.sql` (hardened by 0001/0002) scopes
+ * every query to the signed-in user's project, so project_id is derived here
+ * from the user's staff membership rather than passed from the client.
+ *
+ * SECURITY MODEL (post-hardening):
+ *  - Tenant + owner-staff creation happens in the security-definer RPC
+ *    `create_project_with_owner` — never via client table inserts.
+ *  - Order creation happens in the security-definer RPC `create_order`,
+ *    which re-validates every price against products/addons, computes
+ *    subtotal/VAT/total server-side, and inserts order + items + addons
+ *    atomically. Client-supplied prices are ignored.
+ *  - PIN login uses the security-definer RPC `verify_staff_pin` (bcrypt
+ *    hash checked server-side); PIN hashes are never returned to the client.
+ *  - The public QR menu reads through the narrow `public_menu_by_slug` RPC
+ *    (no cost_price / vat_number / subscription_status) instead of direct
+ *    anonymous table SELECTs.
  */
 import { supabase } from "./supabase";
 import { notifyDataChanged } from "./realtime";
@@ -98,7 +111,8 @@ export interface StaffMember {
   userId?: string;
   fullName: string;
   role: string;
-  pinCode?: string;
+  /** Whether a PIN is set — the PIN itself is never exposed. */
+  hasPin?: boolean;
   isActive: boolean;
 }
 
@@ -237,6 +251,12 @@ export interface CreateOrderArgs {
   customerPhone?: string;
   discountAmount?: number;
   items?: CartItemArg[];
+  /**
+   * Generated once at submit time and reused unchanged on every retry of the
+   * same order (offline queue replay, network retry). The server enforces
+   * uniqueness per project so a retry can never duplicate an order.
+   */
+  idempotencyKey?: string;
 }
 
 export interface ProductInput {
@@ -283,7 +303,7 @@ interface DbAddon {
 }
 interface DbStaff {
   id: string; project_id: string; user_id: string | null; full_name: string;
-  role: string; pin_code: string | null; is_active: boolean; created_at: string;
+  role: string; is_active: boolean; created_at: string; has_pin: boolean;
 }
 interface DbOrder {
   id: string; project_id: string; branch_id: string | null; table_id: string | null;
@@ -336,20 +356,6 @@ function slugify(input: string): string {
       .replace(/^-+|-+$/g, "")
       .slice(0, 40) || "dokan"
   );
-}
-
-async function uniqueSlug(base: string): Promise<string> {
-  let slug = slugify(base);
-  let n = 2;
-  for (;;) {
-    const { data } = await supabase
-      .from("projects")
-      .select("id")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (!data) return slug;
-    slug = `${slugify(base)}-${n++}`;
-  }
 }
 
 function mapProject(r: DbProject): Project {
@@ -439,7 +445,7 @@ function mapStaff(r: DbStaff): StaffMember {
     userId: r.user_id ?? undefined,
     fullName: r.full_name,
     role: r.role,
-    pinCode: r.pin_code ?? undefined,
+    hasPin: r.has_pin,
     isActive: r.is_active,
   };
 }
@@ -565,6 +571,15 @@ async function fetchProject(projectId: Id<"projects">): Promise<Project> {
   return mapProject(data);
 }
 
+/** Hash (or clear) a staff member's PIN server-side via the definer RPC. */
+async function setStaffPin(staffId: string, pin: string | null): Promise<void> {
+  const { error } = await supabase.rpc("set_staff_pin", {
+    p_staff_id: staffId,
+    p_pin: pin ?? null,
+  });
+  if (error) throw error;
+}
+
 // ─── Seed menu (ported from the Convex seedMenu) ───────────────────────────
 
 const SEED_CATEGORIES: [string, string, number][] = [
@@ -664,7 +679,9 @@ export const api = {
       const [branches, tables, staff] = await Promise.all([
         supabase.from("branches").select("*").eq("project_id", projectId).order("created_at"),
         supabase.from("tables").select("*").eq("project_id", projectId).order("created_at"),
-        supabase.from("staff_members").select("*").eq("project_id", projectId).order("created_at"),
+        // staff_view (security invoker) exposes safe columns + has_pin only —
+        // pin hashes are never readable by any client role.
+        supabase.from("staff_view").select("*").eq("project_id", projectId).order("created_at"),
       ]);
       if (branches.error) throw branches.error;
       if (tables.error) throw tables.error;
@@ -690,54 +707,26 @@ export const api = {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData.user) throw new Error("Not signed in.");
 
-      const projectId = crypto.randomUUID();
-      const { error: pErr } = await supabase.from("projects").insert({
-        id: projectId,
-        slug: await uniqueSlug(args.name),
-        name: args.name,
-        name_ar: args.nameAr ?? null,
-        currency: "BHD",
-        vat_rate: 0.1,
-        default_language: "en",
+      // One atomic security-definer RPC creates the project + owner staff row
+      // + first branch + tables. The server generates the slug, enforces one
+      // workspace per user and rolls everything back on any failure — none of
+      // this is client-trusted anymore.
+      const { data: projectId, error: rpcErr } = await supabase.rpc("create_project_with_owner", {
+        p_name: args.name,
+        p_name_ar: args.nameAr ?? null,
+        p_branch_name: args.branchName || "Main Branch",
+        p_branch_name_ar: args.branchNameAr ?? null,
+        p_table_names: (args.tableNames ?? []).map((n) => n.trim()).filter(Boolean),
+        p_currency: "BHD",
+        p_vat_rate: 0.1,
+        p_default_language: "en",
       });
-      if (pErr) throw pErr;
-
-      const { error: sErr } = await supabase.from("staff_members").insert({
-        project_id: projectId,
-        user_id: authData.user.id,
-        full_name: authData.user.email ?? "Owner",
-        role: "owner",
-        is_active: true,
-      });
-      if (sErr) throw sErr;
-
-      const branchId = crypto.randomUUID();
-      const { error: bErr } = await supabase.from("branches").insert({
-        id: branchId,
-        project_id: projectId,
-        name: args.branchName || "Main Branch",
-        name_ar: args.branchNameAr ?? null,
-      });
-      if (bErr) throw bErr;
-
-      const tableRows = (args.tableNames ?? [])
-        .map((n) => n.trim())
-        .filter(Boolean)
-        .map((name, i) => ({
-          id: crypto.randomUUID(),
-          project_id: projectId,
-          branch_id: branchId,
-          name,
-          slug: `${slugify(name)}-${i + 1}`,
-        }));
-      if (tableRows.length > 0) {
-        const { error: tErr } = await supabase.from("tables").insert(tableRows);
-        if (tErr) throw tErr;
-      }
+      if (rpcErr) throw rpcErr;
+      if (!projectId) throw new Error("Workspace creation failed.");
 
       if (args.seedDemoData) await seedMenu(projectId);
 
-      notifyDataChanged();
+      notifyDataChanged(["projects", "branches", "tables", "staff"]);
       return fetchProject(projectId);
     },
 
@@ -758,7 +747,7 @@ export const api = {
       if (Object.keys(patch).length === 0) return;
       const { error } = await supabase.from("projects").update(patch).eq("id", projectId);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["projects"]);
     },
   },
 
@@ -804,7 +793,7 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["catalog"]);
     },
 
     updateCategory: async (args: { id: string; name?: string; nameAr?: string; sortOrder?: number }) => {
@@ -814,13 +803,13 @@ export const api = {
       if (args.sortOrder !== undefined) patch.sort_order = args.sortOrder;
       const { error } = await supabase.from("categories").update(patch).eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["catalog"]);
     },
 
     deleteCategory: async (args: { id: string }) => {
       const { error } = await supabase.from("categories").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["catalog"]);
     },
 
     createProduct: async (args: ProductInput & { name: string; nameAr: string }) => {
@@ -838,7 +827,7 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["catalog"]);
     },
 
     updateProduct: async (args: ProductInput & { id: string }) => {
@@ -853,13 +842,13 @@ export const api = {
       if (args.isAvailable !== undefined) patch.is_available = args.isAvailable;
       const { error } = await supabase.from("products").update(patch).eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["catalog"]);
     },
 
     deleteProduct: async (args: { id: string }) => {
       const { error } = await supabase.from("products").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["catalog"]);
     },
   },
 
@@ -876,13 +865,13 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["branches"]);
     },
 
     deleteBranch: async (args: { id: string }) => {
       const { error } = await supabase.from("branches").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["branches"]);
     },
 
     createTable: async (args: { branchId: string; name: string }) => {
@@ -903,13 +892,13 @@ export const api = {
         is_active: true,
       });
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["tables"]);
     },
 
     deleteTable: async (args: { id: string }) => {
       const { error } = await supabase.from("tables").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["tables"]);
     },
 
     /** Tables with live occupancy — driven by open (pending/preparing) orders. */
@@ -952,30 +941,60 @@ export const api = {
     getStaffByPin: async (args: { pinCode: string }): Promise<StaffMember | null> => {
       const projectId = await getMyProjectId();
       if (!projectId || !args?.pinCode) return null;
-      const { data, error } = await supabase
-        .from("staff_members")
-        .select("*")
-        .eq("project_id", projectId)
-        .eq("pin_code", String(args.pinCode))
-        .eq("is_active", true)
-        .maybeSingle();
+      // verify_staff_pin (security definer) checks the bcrypt hash server-side
+      // and returns safe columns only — never the hash — and enforces a
+      // per-project lockout after repeated failures.
+      const { data, error } = await supabase.rpc("verify_staff_pin", {
+        p_project_id: projectId,
+        p_pin: String(args.pinCode),
+      });
       if (error) throw error;
-      return data ? mapStaff(data) : null;
+      const row = (data ?? [])[0] as DbStaff | undefined;
+      return row ? mapStaff(row) : null;
     },
 
     createStaff: async (args: { fullName: string; role: string; pinCode?: string }) => {
       const projectId = await getMyProjectIdRequired();
       const { data: authData } = await supabase.auth.getUser();
-      const { error } = await supabase.from("staff_members").insert({
-        project_id: projectId,
-        user_id: args.role === "owner" ? authData.user?.id ?? null : null,
-        full_name: args.fullName,
-        role: args.role,
-        pin_code: args.pinCode || null,
-        is_active: true,
-      });
+      const { data: staff, error } = await supabase
+        .from("staff_members")
+        .insert({
+          project_id: projectId,
+          user_id: args.role === "owner" ? authData.user?.id ?? null : null,
+          full_name: args.fullName,
+          role: args.role,
+          is_active: true,
+        })
+        .select("id")
+        .single();
       if (error) throw error;
-      notifyDataChanged();
+
+      // PINs are bcrypt-hashed server-side by the security-definer RPC.
+      if (args.pinCode) {
+        await setStaffPin(staff.id, args.pinCode);
+      }
+
+      // Branch membership: new staff join every active branch by default, so
+      // branch-scoped tenants keep working out of the box. Restricting a
+      // member to a subset of branches is done by removing assignments.
+      const { data: branches } = await supabase
+        .from("branches")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("is_active", true);
+      const assignments = (branches ?? []).map((b) => ({
+        project_id: projectId,
+        staff_id: staff.id,
+        branch_id: b.id,
+        role: args.role,
+        is_active: true,
+      }));
+      if (assignments.length > 0) {
+        const { error: aErr } = await supabase.from("staff_branch_assignments").insert(assignments);
+        if (aErr) throw aErr;
+      }
+
+      notifyDataChanged(["staff"]);
     },
 
     updateStaff: async (args: {
@@ -988,18 +1007,23 @@ export const api = {
       const patch: Record<string, unknown> = {};
       if (args.fullName !== undefined) patch.full_name = args.fullName;
       if (args.role !== undefined) patch.role = args.role;
-      if (args.pinCode !== undefined) patch.pin_code = args.pinCode === null ? null : String(args.pinCode);
       if (args.isActive !== undefined) patch.is_active = args.isActive;
-      if (Object.keys(patch).length === 0) return;
-      const { error } = await supabase.from("staff_members").update(patch).eq("id", args.id);
-      if (error) throw error;
-      notifyDataChanged();
+      if (Object.keys(patch).length > 0) {
+        const { error } = await supabase.from("staff_members").update(patch).eq("id", args.id);
+        if (error) throw error;
+      }
+      // PIN changes go through the definer RPC (bcrypt hash server-side);
+      // null/undefined leaves the existing PIN untouched.
+      if (args.pinCode !== undefined) {
+        await setStaffPin(args.id, args.pinCode);
+      }
+      notifyDataChanged(["staff"]);
     },
 
     deleteStaff: async (args: { id: string }) => {
       const { error } = await supabase.from("staff_members").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["staff"]);
     },
   },
 
@@ -1058,78 +1082,39 @@ export const api = {
 
     createOrder: async (args: CreateOrderArgs): Promise<{ orderNumber: string }> => {
       const projectId = await getMyProjectIdRequired();
-      const project = await fetchProject(projectId);
 
-      // Server-authoritative totals (mirrors the Convex computation)
-      let subtotal = 0;
-      const items: (CartItemArg & { line: number })[] = (args.items ?? []).map((i) => {
-        const addonTotal = (i.addons ?? []).reduce((s, a) => s + num(a.price), 0);
-        const line = (num(i.unitPrice) + addonTotal) * num(i.quantity);
-        subtotal += line;
-        return { ...i, line };
+      // create_order (security definer) re-validates every product/addon price
+      // server-side, computes subtotal / VAT / total inside Postgres and
+      // inserts order + items + addons atomically (no orphaned orders on
+      // partial failure). Client-supplied prices are ignored. The idempotency
+      // key is generated once at submit time (pos.tsx) and reused unchanged on
+      // retries; the server dedupes on (project_id, idempotency_key).
+      const { data, error } = await supabase.rpc("create_order", {
+        p_project_id: projectId,
+        p_table_id: args.tableId ?? null,
+        p_order_type: args.orderType ?? "dine-in",
+        p_payment_method: args.paymentMethod ?? "cash",
+        p_payment_status: args.paymentStatus ?? "pending",
+        p_customer_name: args.customerName ?? null,
+        p_customer_phone: args.customerPhone ?? null,
+        p_discount_amount: num(args.discountAmount) || 0,
+        p_staff_id: args.staffId ?? null,
+        p_source: "pos",
+        p_idempotency_key: args.idempotencyKey ?? null,
+        p_items: (args.items ?? []).map((i) => ({
+          product_id: i.productId ?? null,
+          quantity: num(i.quantity) || 1,
+          notes: i.notes ?? null,
+          addons: (i.addons ?? []).map((a) => ({ addon_id: a.addonId ?? null })),
+        })),
       });
-      const discount = num(args.discountAmount) || 0;
-      const vat = Math.max(0, (subtotal - discount) * (num(project.vatRate) || 0.1));
-      const total = Math.max(0, subtotal - discount + vat);
-
-      const { data: order, error } = await supabase
-        .from("orders")
-        .insert({
-          id: crypto.randomUUID(),
-          project_id: projectId,
-          order_type: args.orderType ?? "dine-in",
-          table_id: args.tableId ?? null,
-          staff_id: args.staffId ?? null,
-          payment_method: args.paymentMethod ?? "cash",
-          payment_status: args.paymentStatus ?? "pending",
-          customer_name: args.customerName ?? null,
-          customer_phone: args.customerPhone ?? null,
-          subtotal: round3(subtotal),
-          vat_amount: round3(vat),
-          discount_amount: round3(discount),
-          total: round3(total),
-          idempotency_key: crypto.randomUUID(),
-          source: "pos",
-        })
-        .select("id, order_number")
-        .single();
       if (error) throw error;
-
-      const itemRows = items.map((i) => ({
-        order_id: order.id,
-        product_id: i.productId ?? null,
-        product_name: i.name,
-        product_name_ar: i.nameAr ?? null,
-        unit_price: round3(num(i.unitPrice)),
-        quantity: num(i.quantity),
-        total_price: round3(i.line),
-        notes: i.notes ?? null,
-      }));
-      const { data: insertedItems, error: itemsError } = await supabase
-        .from("order_items")
-        .insert(itemRows)
-        .select("id");
-      if (itemsError) throw itemsError;
-
-      const addonRows: Record<string, unknown>[] = [];
-      items.forEach((i, idx) => {
-        for (const a of i.addons ?? []) {
-          addonRows.push({
-            order_item_id: insertedItems[idx].id,
-            addon_id: a.addonId ?? null,
-            addon_name: a.name,
-            addon_name_ar: a.nameAr ?? null,
-            price: round3(num(a.price)),
-          });
-        }
-      });
-      if (addonRows.length > 0) {
-        const { error: aErr } = await supabase.from("order_item_addons").insert(addonRows);
-        if (aErr) throw aErr;
-      }
-
-      notifyDataChanged();
-      return { orderNumber: order.order_number };
+      const row = (data ?? [])[0] as
+        | { order_id: string; order_number: string }
+        | undefined;
+      if (!row) throw new Error("Order creation failed.");
+      notifyDataChanged(["orders"]);
+      return { orderNumber: row.order_number };
     },
 
     updateOrderStatus: async (args: { orderId: string; status: string }) => {
@@ -1138,7 +1123,7 @@ export const api = {
         .update({ status: args.status })
         .eq("id", args.orderId);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["orders"]);
     },
 
     payOrder: async (args: { orderId: string }) => {
@@ -1147,7 +1132,7 @@ export const api = {
         .update({ payment_status: "paid" })
         .eq("id", args.orderId);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["orders"]);
     },
   },
 
@@ -1236,7 +1221,7 @@ export const api = {
         active: true,
       });
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["loyalty"]);
     },
 
     updateLoyaltyProgram: async (args: {
@@ -1258,13 +1243,13 @@ export const api = {
       if (Object.keys(patch).length === 0) return;
       const { error } = await supabase.from("loyalty_programs").update(patch).eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["loyalty"]);
     },
 
     deleteLoyaltyProgram: async (args: { id: string }) => {
       const { error } = await supabase.from("loyalty_programs").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["loyalty"]);
     },
 
     listLoyaltyStamps: async (
@@ -1310,13 +1295,13 @@ export const api = {
         active: true,
       });
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["promotions"]);
     },
 
     deletePromotion: async (args: { id: string }) => {
       const { error } = await supabase.from("promotions").delete().eq("id", args.id);
       if (error) throw error;
-      notifyDataChanged();
+      notifyDataChanged(["promotions"]);
     },
   },
 
@@ -1327,40 +1312,36 @@ export const api = {
     ): Promise<PublicMenu | null | undefined> => {
       if (args === "skip" || !args?.projectSlug) return undefined;
 
-      const { data: project, error: pErr } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("slug", args.projectSlug)
-        .eq("is_active", true)
-        .maybeSingle();
-      if (pErr) throw pErr;
-      if (!project) return null;
+      // One security-definer RPC returns the whole public menu: only menu-safe
+      // columns (never cost_price / vat_number / subscription_status), the QR
+      // table validated, and no anonymous direct SELECT on projects/tables/
+      // categories/products/addons at all.
+      const { data, error } = await supabase.rpc("public_menu_by_slug", {
+        p_slug: args.projectSlug,
+        p_table_slug: args.tableSlug ?? null,
+      });
+      if (error) throw error;
 
-      // Resolve the QR table name so the header can show "Table 4" instead of
-      // the raw slug from the URL.
-      let tableName: string | undefined;
-      if (args.tableSlug) {
-        const { data: table } = await supabase
-          .from("tables")
-          .select("name")
-          .eq("project_id", project.id)
-          .eq("slug", args.tableSlug)
-          .eq("is_active", true)
-          .maybeSingle();
-        tableName = table?.name ?? undefined;
-      }
+      const menu = (data ?? [])[0] as
+        | null
+        | undefined
+        | {
+            error?: string;
+            project?: Record<string, unknown>;
+            table?: { id: string; name: string } | null;
+            categories?: unknown[];
+            products?: unknown[];
+            addons?: unknown[];
+          };
+      if (!menu || menu.error === "table_not_found" || !menu.project) return null;
 
-      const [categories, products, addons] = await Promise.all([
-        supabase.from("categories").select("*").eq("project_id", project.id).order("sort_order"),
-        supabase.from("products").select("*").eq("project_id", project.id).order("name"),
-        supabase.from("addons").select("*").eq("project_id", project.id),
-      ]);
-      if (categories.error) throw categories.error;
-      if (products.error) throw products.error;
-      if (addons.error) throw addons.error;
+      const project = menu.project as unknown as DbProject;
+      const categories = (menu.categories ?? []) as unknown as DbCategory[];
+      const products = (menu.products ?? []) as unknown as DbProduct[];
+      const addons = (menu.addons ?? []) as unknown as DbAddon[];
 
       const addonsByProduct: Record<string, Addon[]> = {};
-      for (const a of (addons.data ?? []).map(mapAddon)) {
+      for (const a of addons.map(mapAddon)) {
         if (!a.isActive) continue;
         const list = addonsByProduct[a.productId] ?? [];
         list.push(a);
@@ -1369,13 +1350,13 @@ export const api = {
 
       return {
         project: mapProject(project),
-        categories: (categories.data ?? [])
+        categories: categories
           .map(mapCategory)
           .filter((c) => c.isActive)
           .sort((a, b) => a.sortOrder - b.sortOrder),
-        products: (products.data ?? []).map(mapProduct).filter((p) => p.isActive),
+        products: products.map(mapProduct).filter((p) => p.isActive),
         addonsByProduct,
-        tableName,
+        tableName: menu.table?.name,
       };
     },
 
@@ -1386,92 +1367,43 @@ export const api = {
       customerName?: string;
       customerPhone?: string;
       items?: CartItemArg[];
+      idempotencyKey?: string;
     }): Promise<{ orderNumber: string }> => {
-      const { data: project } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("slug", args.projectSlug)
-        .eq("is_active", true)
-        .single();
+      // Narrow public lookup: only the columns the menu needs (no vat_number /
+      // subscription_status), never a full projects table SELECT.
+      const { data: pdata, error: pErr } = await supabase.rpc("public_project_by_slug", {
+        p_slug: args.projectSlug,
+      });
+      if (pErr) throw pErr;
+      const project = (pdata ?? [])[0] as { id: string } | undefined;
       if (!project) throw new Error("Menu not found.");
 
-      const { data: table, error: tErr } = await supabase
-        .from("tables")
-        .select("id")
-        .eq("project_id", project.id)
-        .eq("slug", args.tableSlug)
-        .eq("is_active", true)
-        .maybeSingle();
-      if (tErr) throw tErr;
-      if (!table) throw new Error("Table not found.");
-
-      let subtotal = 0;
-      const items: (CartItemArg & { line: number })[] = (args.items ?? []).map((i) => {
-        const addonTotal = (i.addons ?? []).reduce((s, a) => s + num(a.price), 0);
-        const line = (num(i.unitPrice) + addonTotal) * num(i.quantity);
-        subtotal += line;
-        return { ...i, line };
+      // Same server-authoritative flow as the POS: prices are re-validated and
+      // the whole order (order + items + addons) is inserted atomically by the
+      // security-definer RPC, deduped on the idempotency key.
+      const { data, error } = await supabase.rpc("create_order", {
+        p_project_id: project.id,
+        p_table_slug: args.tableSlug,
+        p_order_type: "dine-in",
+        p_payment_method: "cash",
+        p_payment_status: "pending",
+        p_customer_name: args.customerName ?? null,
+        p_customer_phone: args.customerPhone ?? null,
+        p_source: "qr-menu",
+        p_idempotency_key: args.idempotencyKey ?? null,
+        p_items: (args.items ?? []).map((i) => ({
+          product_id: i.productId ?? null,
+          quantity: num(i.quantity) || 1,
+          addons: (i.addons ?? []).map((a) => ({ addon_id: a.addonId ?? null })),
+        })),
       });
-      const vat = Math.max(0, subtotal * (num(project.vat_rate) || 0.1));
-      const total = subtotal + vat;
-
-      const { data: order, error } = await supabase
-        .from("orders")
-        .insert({
-          id: crypto.randomUUID(),
-          project_id: project.id,
-          table_id: table.id,
-          order_type: "dine-in",
-          status: "pending",
-          payment_method: "cash",
-          payment_status: "pending",
-          customer_name: args.customerName ?? null,
-          customer_phone: args.customerPhone ?? null,
-          subtotal: round3(subtotal),
-          vat_amount: round3(vat),
-          discount_amount: 0,
-          total: round3(total),
-          idempotency_key: crypto.randomUUID(),
-          source: "qr-menu",
-        })
-        .select("id, order_number")
-        .single();
       if (error) throw error;
-
-      const itemRows = items.map((i) => ({
-        order_id: order.id,
-        product_id: i.productId ?? null,
-        product_name: i.name,
-        product_name_ar: i.nameAr ?? null,
-        unit_price: round3(num(i.unitPrice)),
-        quantity: num(i.quantity),
-        total_price: round3(i.line),
-      }));
-      const { data: insertedItems, error: itemsError } = await supabase
-        .from("order_items")
-        .insert(itemRows)
-        .select("id");
-      if (itemsError) throw itemsError;
-
-      const addonRows: Record<string, unknown>[] = [];
-      items.forEach((i, idx) => {
-        for (const a of i.addons ?? []) {
-          addonRows.push({
-            order_item_id: insertedItems[idx].id,
-            addon_id: a.addonId ?? null,
-            addon_name: a.name,
-            addon_name_ar: a.nameAr ?? null,
-            price: round3(num(a.price)),
-          });
-        }
-      });
-      if (addonRows.length > 0) {
-        const { error: aErr } = await supabase.from("order_item_addons").insert(addonRows);
-        if (aErr) throw aErr;
-      }
-
-      notifyDataChanged();
-      return { orderNumber: order.order_number };
+      const row = (data ?? [])[0] as
+        | { order_id: string; order_number: string }
+        | undefined;
+      if (!row) throw new Error("Order creation failed.");
+      notifyDataChanged(["orders"]);
+      return { orderNumber: row.order_number };
     },
   },
 };
