@@ -84,6 +84,9 @@ export default function PublicMenu() {
         tableSlug,
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
+        // One key per submission — the server dedupes on it, so a double-tap
+        // or network retry can never place the same order twice.
+        idempotencyKey: crypto.randomUUID(),
         items: cart.map((i) => ({
           productId: i.productId,
           name: i.name,

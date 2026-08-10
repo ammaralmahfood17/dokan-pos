@@ -35,9 +35,13 @@ export default function Staff() {
     try {
       const fullName = String(fd.get("fullName") ?? "");
       const role = String(fd.get("role") ?? "cashier");
-      const pinCode = String(fd.get("pinCode") ?? "").trim() || undefined;
+      // A blank PIN field means "leave the existing PIN untouched" when
+      // editing (we never prefill or display PINs); undefined skips the
+      // set_staff_pin RPC entirely so an existing PIN is not wiped.
+      const pinInput = String(fd.get("pinCode") ?? "").trim();
+      const pinCode = pinInput || undefined;
       if (editing) {
-        await updateStaff({ id: editing._id, fullName, role, pinCode: pinCode ?? null });
+        await updateStaff({ id: editing._id, fullName, role, pinCode });
       } else {
         await createStaff({ fullName, role, pinCode });
       }
@@ -94,7 +98,8 @@ export default function Staff() {
                 placeholder={t("staff.pin") + " (4 digits)"}
                 maxLength={4}
                 inputMode="numeric"
-                defaultValue={editing?.pinCode ?? ""}
+                defaultValue=""
+                autoComplete="one-time-code"
               />
               <Button type="submit" className="w-full" disabled={saving}>
                 {saving ? <Loader2 className="size-4 animate-spin" /> : editing ? "Update" : t("common.create")}
@@ -119,7 +124,7 @@ export default function Staff() {
               <tr key={m._id} className="border-b border-border/40">
                 <td className="px-4 py-3 font-medium">{m.fullName}</td>
                 <td className="px-4 py-3 text-xs capitalize text-muted-foreground">{ROLE_KEYS[m.role] ?? m.role}</td>
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{m.pinCode ?? "—"}</td>
+                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{m.hasPin ? "••••" : "—"}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex justify-end gap-1">
                     <Button

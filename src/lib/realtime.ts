@@ -18,7 +18,9 @@ export function subscribeData(listener: Listener): () => void {
   };
 }
 
-export function notifyDataChanged() {
+// Optional keys arg is accepted for call-site compatibility (the pub/sub is
+// table-agnostic — every listener refetches whatever it queries).
+export function notifyDataChanged(_keys?: string[]) {
   listeners.forEach((l) => {
     try {
       l();

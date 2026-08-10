@@ -143,6 +143,10 @@ export default function POS() {
       customerPhone: customerPhone || undefined,
       discountAmount: discount || 0,
       items,
+      // Generated ONCE per submission and reused unchanged on every retry
+      // (offline queue replay, network retry). The server dedupes on
+      // (project_id, idempotency_key), so a retry can never duplicate.
+      idempotencyKey: crypto.randomUUID(),
     };
 
     if (!online) {
