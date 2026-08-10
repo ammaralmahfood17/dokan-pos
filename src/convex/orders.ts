@@ -266,11 +266,18 @@ export const listOrders = query({
   handler: async (ctx) => {
     const projectId = await requireProjectId(ctx);
 
-    const orders = await ctx.db
-      .query("orders")
-      .withIndex("by_project", (q: any) => q.eq("projectId", projectId))
-      .order("desc")
-      .collect();
+    const [orders, tables] = await Promise.all([
+      ctx.db
+        .query("orders")
+        .withIndex("by_project", (q: any) => q.eq("projectId", projectId))
+        .order("desc")
+        .collect(),
+      ctx.db
+        .query("tables")
+        .withIndex("by_project", (q: any) => q.eq("projectId", projectId))
+        .collect(),
+    ]);
+    const tableNameById = new Map(tables.map((t) => [t._id, t.name]));
 
     const orderIds = orders.map((o) => o._id);
     const itemsList = await Promise.all(
@@ -294,6 +301,7 @@ export const listOrders = query({
 
     return orders.map((o, i) => ({
       ...o,
+      tableName: o.tableId ? tableNameById.get(o.tableId) : undefined,
       items: itemsList[i].map((it) => ({ ...it, addons: addonMap.get(it._id) ?? [] })),
     }));
   },

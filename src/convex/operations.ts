@@ -86,6 +86,47 @@ export const createTable = mutation({
   },
 });
 
+/**
+ * Tables for the workspace with live occupancy derived from active orders
+ * (pending / preparing). Reactive: placing or delivering an order flips the
+ * status in real time.
+ */
+export const tablesWithStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const projectId = await requireProjectId(ctx);
+    const [tables, orders] = await Promise.all([
+      ctx.db
+        .query("tables")
+        .withIndex("by_project", (q: any) => q.eq("projectId", projectId))
+        .collect(),
+      ctx.db
+        .query("orders")
+        .withIndex("by_project", (q: any) => q.eq("projectId", projectId))
+        .collect(),
+    ]);
+
+    const activeByTable = new Map<string, string[]>();
+    for (const o of orders) {
+      if (!o.tableId) continue;
+      if (o.status === "pending" || o.status === "preparing") {
+        const list = activeByTable.get(o.tableId) ?? [];
+        list.push(o.orderNumber);
+        activeByTable.set(o.tableId, list);
+      }
+    }
+
+    return tables.map((t) => {
+      const activeOrders = activeByTable.get(t._id) ?? [];
+      return {
+        ...t,
+        activeOrders,
+        occupied: activeOrders.length > 0,
+      };
+    });
+  },
+});
+
 export const updateTable = mutation({
   args: {
     id: v.id("tables"),

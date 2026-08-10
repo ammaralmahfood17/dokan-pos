@@ -92,7 +92,7 @@ export default function KDS() {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold">{o.orderNumber}</span>
-                        {o.tableId && <span className="text-xs text-muted-foreground">{t("menu.table")} {o.tableId}</span>}
+                        {o.tableName && <span className="text-xs text-muted-foreground">{t("menu.table")} {o.tableName}</span>}
                         <Badge variant="outline" className="text-[10px]">{t(`order.type.${o.orderType}`)}</Badge>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{formatTime(o._creationTime, lang)}</p>
@@ -154,6 +154,7 @@ export default function KDS() {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold">{o.orderNumber}</span>
+                        {o.tableName && <span className="text-xs text-muted-foreground">{t("menu.table")} {o.tableName}</span>}
                         <span className="text-xs text-muted-foreground">{formatTime(o._creationTime, lang)}</span>
                       </div>
                     </div>

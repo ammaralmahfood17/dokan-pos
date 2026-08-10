@@ -67,7 +67,7 @@ export default function Orders() {
               <div className="min-w-0">
                 <p className="text-xs text-muted-foreground">
                   {t(`order.type.${o.orderType}`)}
-                  {o.tableId && <> · {t("menu.table")} {o.tableId}</>}
+                  {o.tableName && <> · {t("menu.table")} {o.tableName}</>}
                 </p>
                 <p className="text-xs truncate mt-0.5">
                   {o.items.slice(0, 3).map((i: any) =>

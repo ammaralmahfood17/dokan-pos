@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { useMutation } from "convex/react";
+import { useState, useCallback, useEffect } from "react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { usePosCatalog } from "@/hooks/use-workspace";
 import { useOnline } from "@/hooks/use-online";
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
-  Plus, Minus, Trash2, ShoppingCart, Search, Utensils, Package, Bike,
+  Plus, Minus, Trash2, Search, Utensils, Package, Bike,
   Banknote, CreditCard, QrCode, Percent,
 } from "lucide-react";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -37,6 +37,7 @@ interface CartItem {
 export default function POS() {
   const catalog = usePosCatalog();
   const createOrder = useMutation(api.orders.createOrder);
+  const tablesWithStatus = useQuery(api.operations.tablesWithStatus);
   const online = useOnline();
   const { staffId } = useStaff();
   const { t, lang } = useI18n();
@@ -44,6 +45,8 @@ export default function POS() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [orderType, setOrderType] = useState<"dine-in" | "takeaway" | "delivery">("dine-in");
+  const [selectedTable, setSelectedTable] = useState<Id<"tables"> | undefined>(undefined);
+  const [pendingTable, setPendingTable] = useState<any>(null);
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "benefitpay" | "card">("cash");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [customerName, setCustomerName] = useState("");
@@ -52,6 +55,11 @@ export default function POS() {
   const [showPayment, setShowPayment] = useState(false);
   const [showAddon, setShowAddon] = useState<any>(null);
   const [addonSelections, setAddonSelections] = useState<any[]>([]);
+
+  // Clear the selected table when switching away from dine-in.
+  useEffect(() => {
+    if (orderType !== "dine-in") setSelectedTable(undefined);
+  }, [orderType]);
 
   const categories = catalog?.categories ?? [];
   const allProducts = catalog?.products ?? [];
@@ -110,6 +118,8 @@ export default function POS() {
   const vat = Math.max(0, (subtotal - discount) * 0.1);
   const total = Math.max(0, subtotal - discount + vat);
 
+  const selectedTableName = tablesWithStatus?.find((tb) => tb._id === selectedTable)?.name;
+
   const handleConfirm = async () => {
     const items = cart.map((i) => ({
       productId: i.productId,
@@ -126,13 +136,12 @@ export default function POS() {
       paymentMethod,
       paymentStatus: (paymentMethod === "cash" ? "paid" : "pending") as "paid" | "pending",
       staffId: staffId,
+      tableId: orderType === "dine-in" ? selectedTable : undefined,
       customerName: customerName || undefined,
       customerPhone: customerPhone || undefined,
       discountAmount: discount || 0,
       items,
     };
-
-    console.log({ payload, staffId });
 
     if (!online) {
       addToQueue(payload);
@@ -143,7 +152,11 @@ export default function POS() {
 
     try {
       await createOrder(payload);
-      toast(t("pos.orderPlaced"));
+      toast(
+        selectedTableName
+          ? `${t("pos.orderPlaced")} — ${t("menu.table")} ${selectedTableName}`
+          : t("pos.orderPlaced"),
+      );
       setCart([]);
       setShowPayment(false);
       setDiscount(0);
@@ -181,6 +194,54 @@ export default function POS() {
             </button>
           ))}
         </div>
+
+        {/* Table selector — dine-in only */}
+        {orderType === "dine-in" && (
+          <div className="flex items-center gap-1.5 border-b border-border px-4 py-2 overflow-x-auto shrink-0">
+            <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {t("menu.table")}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedTable(undefined)}
+              className={`shrink-0 rounded-sm px-2.5 py-1.5 text-[10px] font-medium transition-colors border
+                ${!selectedTable
+                  ? "bg-foreground text-background border-foreground"
+                  : "border-dashed border-border text-muted-foreground hover:bg-secondary hover:text-foreground"}`}
+            >
+              {t("pos.noTable")}
+            </button>
+            {(tablesWithStatus ?? []).map((tb) => {
+              const isSelected = selectedTable === tb._id;
+              return (
+                <button
+                  key={tb._id}
+                  type="button"
+                  onClick={() => {
+                    if (tb.occupied) {
+                      setPendingTable(tb);
+                    } else {
+                      setSelectedTable(tb._id);
+                    }
+                  }}
+                  title={tb.occupied ? `${tb.name} — ${t("pos.occupied")}: ${tb.activeOrders.join(", ")}` : tb.name}
+                  className={`shrink-0 flex items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[10px] font-medium transition-colors border
+                    ${isSelected
+                      ? "bg-foreground text-background border-foreground"
+                      : tb.occupied
+                        ? "border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                        : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground"}`}
+                >
+                  <span className={`size-1.5 rounded-full ${tb.occupied ? "bg-amber-500" : "bg-emerald-500"}`} />
+                  {tb.name}
+                  {tb.occupied && tb.activeOrders.length > 1 && (
+                    <span className="font-mono text-[8px] opacity-80">×{tb.activeOrders.length}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Search */}
         <div className="relative border-b border-border px-4 py-2 shrink-0">
@@ -247,7 +308,14 @@ export default function POS() {
       {/* Right: Cart */}
       <div className="flex w-80 flex-col border-s border-border bg-card">
         <div className="border-b border-border px-4 py-3">
-          <p className="text-xs font-medium text-muted-foreground">{t("pos.cart")}</p>
+          <p className="text-xs font-medium text-muted-foreground">
+            {t("pos.cart")}
+            {selectedTableName && (
+              <span className="ms-2 text-[10px] font-semibold text-foreground">
+                · {t("menu.table")} {selectedTableName}
+              </span>
+            )}
+          </p>
         </div>
 
         <ScrollArea className="flex-1 px-4 py-3">
@@ -405,6 +473,33 @@ export default function POS() {
         </div>
       </div>
 
+      {/* Occupied-table confirm dialog */}
+      <Dialog open={!!pendingTable} onOpenChange={() => setPendingTable(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pendingTable?.name}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm leading-6 text-muted-foreground">
+            {t("pos.tableInUse")
+              .replace("{name}", pendingTable?.name ?? "")
+              .replace("{orders}", pendingTable?.activeOrders?.join(", ") ?? "")}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setPendingTable(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                setSelectedTable(pendingTable._id);
+                setPendingTable(null);
+              }}
+            >
+              {t("common.confirm")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Addon modal */}
       {showAddon && (
         <Dialog open={!!showAddon} onOpenChange={() => setShowAddon(null)}>
@@ -463,7 +558,8 @@ export default function POS() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex gap-2">
-              {[                  { value: "cash" as const, icon: Banknote, label: "order.payment.cash" },
+              {[
+                { value: "cash" as const, icon: Banknote, label: "order.payment.cash" },
                 { value: "benefitpay" as const, icon: QrCode, label: "order.payment.benefitpay" },
                 { value: "card" as const, icon: CreditCard, label: "order.payment.card" },
               ].map((opt) => (
