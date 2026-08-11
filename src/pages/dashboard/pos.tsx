@@ -12,13 +12,16 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { BenefitPayModal } from "@/components/payments/BenefitPayModal";
+import { Receipt } from "@/components/receipt/Receipt";
+import { printReceipt, printKitchenTicket, type ReceiptData } from "@/lib/printer";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Plus, Minus, Trash2, Search, Utensils, Package, Bike,
-  Banknote, CreditCard, QrCode, Percent, Loader2,
+  Banknote, CreditCard, QrCode, Percent, Loader2, Printer,
 } from "lucide-react";
 import type { Addon, CartAddonArg, Id, Product, TableWithStatus } from "@/lib/api";
 
@@ -31,6 +34,43 @@ interface CartItem {
   quantity: number;
   notes?: string;
   addons: { addonId?: Id<"addons">; name: string; nameAr?: string; price: number }[];
+}
+
+/**
+ * Builds the printable-receipt snapshot. Lives at module scope because it
+ * calls Date.now() — impure, and must not be invoked during render.
+ */
+function buildReceiptSnapshot(args: {
+  orderNumber: string;
+  tableName?: string;
+  customerName?: string;
+  paymentMethod: string;
+  items: CartItem[];
+  subtotal: number;
+  discount: number;
+  vat: number;
+  total: number;
+}): ReceiptData {
+  return {
+    orderNumber: args.orderNumber,
+    createdAt: Date.now(),
+    tableName: args.tableName,
+    customerName: args.customerName,
+    paymentMethod: args.paymentMethod,
+    items: args.items.map((i) => ({
+      name: i.name,
+      nameAr: i.nameAr,
+      quantity: i.quantity,
+      unitPrice: i.unitPrice,
+      addons: i.addons.length > 0
+        ? i.addons.map((a) => ({ name: a.name, nameAr: a.nameAr, price: a.price }))
+        : undefined,
+    })),
+    subtotal: args.subtotal,
+    discount: args.discount,
+    vat: args.vat,
+    total: args.total,
+  };
 }
 
 // ─── Component ───────────────────────────────────────────
@@ -57,6 +97,8 @@ export default function POS() {
   const [showPayment, setShowPayment] = useState(false);
   const [showAddon, setShowAddon] = useState<Product | null>(null);
   const [addonSelections, setAddonSelections] = useState<Addon[]>([]);
+  const [benefitPayTx, setBenefitPayTx] = useState<{ orderId: string; amount: number } | null>(null);
+  const [justPlaced, setJustPlaced] = useState<ReceiptData | null>(null);
 
   const categories = catalog?.categories ?? [];
   const allProducts = catalog?.products ?? [];
@@ -150,7 +192,7 @@ export default function POS() {
     };
 
     if (!online) {
-      addToQueue(payload);
+      void addToQueue(payload);
       toast(t("pos.orderPlaced"));
       setCart([]);
       setShowPayment(false);
@@ -162,12 +204,29 @@ export default function POS() {
     }
 
     try {
-      await createOrder(payload);
-      toast(
-        selectedTableName
-          ? `${t("pos.orderPlaced")} — ${t("menu.table")} ${selectedTableName}`
-          : t("pos.orderPlaced"),
-      );
+      const result = await createOrder(payload);
+      if (paymentMethod === "benefitpay") {
+        // Order is created as pending — open the QR payment session.
+        setBenefitPayTx({ orderId: result.orderId, amount: total });
+      } else {
+        toast(
+          selectedTableName
+            ? `${t("pos.orderPlaced")} — ${t("menu.table")} ${selectedTableName}`
+            : t("pos.orderPlaced"),
+        );
+      }
+      // Snapshot for the printable receipt (order is already cleared below).
+      setJustPlaced(buildReceiptSnapshot({
+        orderNumber: result.orderNumber,
+        tableName: selectedTableName,
+        customerName: customerName || undefined,
+        paymentMethod,
+        items: cart,
+        subtotal,
+        discount,
+        vat,
+        total,
+      }));
       setCart([]);
       setShowPayment(false);
       setDiscount(0);
@@ -627,6 +686,49 @@ export default function POS() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* BenefitPay QR payment session */}
+      {benefitPayTx && (
+        <BenefitPayModal
+          open={!!benefitPayTx}
+          orderId={benefitPayTx.orderId}
+          amount={benefitPayTx.amount}
+          onSuccess={() => toast(`${t("pos.orderPlaced")} — ${t("benefitPay.paid")}`)}
+          onClose={() => setBenefitPayTx(null)}
+        />
+      )}
+
+      {/* Post-order print dialog */}
+      <Dialog open={!!justPlaced} onOpenChange={(o) => !o && setJustPlaced(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {t("pos.order")} #{justPlaced?.orderNumber} — {t("pos.orderPlaced")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <Button className="w-full min-h-[44px] gap-2" onClick={() => void printReceipt()}>
+              <Printer className="size-4" />
+              {t("pos.printReceipt")}
+            </Button>
+            <Button variant="outline" className="w-full min-h-[44px] gap-2" onClick={() => void printKitchenTicket()}>
+              <Printer className="size-4" />
+              {t("pos.printKitchen")}
+            </Button>
+            <Button variant="ghost" className="w-full min-h-[44px]" onClick={() => setJustPlaced(null)}>
+              {t("common.confirm")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Printable 80mm nodes — invisible on screen, printed via printer.ts */}
+      {justPlaced && (
+        <>
+          <Receipt data={justPlaced} variant="receipt" />
+          <Receipt data={justPlaced} variant="kitchen" />
+        </>
+      )}
     </div>
   );
 }

@@ -3,11 +3,16 @@ import { Toaster } from "@/components/ui/sonner";
 import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { AuthProvider } from "@/hooks/use-auth";
+import { applySavedTheme } from "@/lib/theme";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import { LanguageProvider } from "@/lib/i18n";
 import "./index.css";
+
+// Apply the saved theme before the first paint so there is no flash of the
+// default theme (P2.1 — live theme customizer).
+applySavedTheme();
 
 // Register the PWA service worker in production builds only — the dev preview
 // must always serve fresh modules.

@@ -42,6 +42,8 @@ export interface Project {
   logoUrl?: string;
   isActive: boolean;
   defaultLanguage: string;
+  /** Tenant configuration merged into the projects.metadata jsonb column. */
+  metadata?: Record<string, unknown>;
   _creationTime: number;
 }
 
@@ -220,6 +222,8 @@ export interface PublicMenu {
   addonsByProduct: Record<string, Addon[]>;
   /** Resolved table name for the QR table, when a tableSlug was provided. */
   tableName?: string;
+  /** Resolved table id — used by "Call Waiter" (waiter_calls). */
+  tableId?: string;
 }
 
 // ─── Input types for mutations ─────────────────────────────────────────────
@@ -277,7 +281,7 @@ interface DbProject {
   id: string; slug: string; name: string; name_ar: string | null;
   currency: string | null; vat_number: string | null; vat_rate: string | number | null;
   logo_url: string | null; is_active: boolean; default_language: string | null;
-  created_at: string; updated_at: string | null;
+  metadata: Record<string, unknown> | null; created_at: string; updated_at: string | null;
 }
 interface DbBranch {
   id: string; project_id: string; name: string; name_ar: string | null;
@@ -368,6 +372,7 @@ function mapProject(r: DbProject): Project {
     logoUrl: r.logo_url ?? undefined,
     isActive: r.is_active,
     defaultLanguage: r.default_language ?? "en",
+    metadata: r.metadata ?? undefined,
     _creationTime: ts(r.created_at),
   };
 }
@@ -734,6 +739,7 @@ export const api = {
       vatRate?: number;
       vatNumber?: string;
       currency?: string;
+      benefitpayMerchantId?: string;
     }): Promise<void> => {
       const projectId = await getMyProjectIdRequired();
       const patch: Record<string, unknown> = {};
@@ -742,6 +748,22 @@ export const api = {
       if (args.vatRate !== undefined) patch.vat_rate = args.vatRate;
       if (args.vatNumber !== undefined) patch.vat_number = args.vatNumber;
       if (args.currency !== undefined) patch.currency = args.currency;
+      if (args.benefitpayMerchantId !== undefined) {
+        // jsonb updates replace the whole column, so read the current value
+        // first and merge — never clobber other metadata keys.
+        const { data: cur } = await supabase
+          .from("projects")
+          .select("metadata")
+          .eq("id", projectId)
+          .single();
+        const merged = { ...((cur?.metadata as Record<string, unknown> | null) ?? {}) };
+        if (args.benefitpayMerchantId.trim()) {
+          merged.benefitpayMerchantId = args.benefitpayMerchantId.trim();
+        } else {
+          delete merged.benefitpayMerchantId;
+        }
+        patch.metadata = merged;
+      }
       if (Object.keys(patch).length === 0) return;
       const { error } = await supabase.from("projects").update(patch).eq("id", projectId);
       if (error) throw error;
@@ -1078,7 +1100,7 @@ export const api = {
       }));
     },
 
-    createOrder: async (args: CreateOrderArgs): Promise<{ orderNumber: string }> => {
+    createOrder: async (args: CreateOrderArgs): Promise<{ orderId: string; orderNumber: string }> => {
       const projectId = await getMyProjectIdRequired();
 
       // create_order (security definer) re-validates every product/addon price
@@ -1112,7 +1134,7 @@ export const api = {
         | undefined;
       if (!row) throw new Error("Order creation failed.");
       notifyDataChanged();
-      return { orderNumber: row.order_number };
+      return { orderId: row.order_id, orderNumber: row.order_number };
     },
 
     updateOrderStatus: async (args: { orderId: string; status: string }) => {
@@ -1131,6 +1153,87 @@ export const api = {
         .eq("id", args.orderId);
       if (error) throw error;
       notifyDataChanged();
+    },
+  },
+
+  payments: {
+    /** Begin a BenefitPay session — returns the payload the POS renders as a QR code. */
+    initiateBenefitPay: async (args: {
+      orderId: string;
+      amount: number;
+    }): Promise<{
+      transactionId: string;
+      merchantId: string;
+      amount: number;
+      orderId: string;
+      timestamp: number;
+    }> => {
+      const projectId = await getMyProjectIdRequired();
+      const { data, error } = await supabase.rpc("initiate_benefitpay_payment", {
+        p_project_id: projectId,
+        p_order_id: args.orderId,
+        p_amount: num(args.amount),
+      });
+      if (error) throw error;
+      const payload = (data ?? null) as {
+        transactionId: string;
+        merchantId: string;
+        amount: number;
+        orderId: string;
+        timestamp: number;
+      } | null;
+      if (!payload?.transactionId) throw new Error("BenefitPay initiation failed.");
+      return payload;
+    },
+
+    /** Poll a pending transaction's status (the modal polls every 5 s). */
+    checkBenefitPayStatus: async (args: { transactionId: string }): Promise<{
+      transactionId: string;
+      status: "pending" | "completed" | "failed";
+    }> => {
+      const { data, error } = await supabase.rpc("get_benefitpay_transaction", {
+        p_transaction_id: args.transactionId,
+      });
+      if (error) throw error;
+      const row = (data ?? null) as {
+        transactionId: string;
+        status: "pending" | "completed" | "failed";
+      } | null;
+      if (!row) throw new Error("Transaction not found.");
+      return row;
+    },
+
+    /**
+     * Confirm a sandbox payment. In production this is the gateway webhook
+     * handler (server-side); until live merchant credentials exist it is what
+     * a staff member taps to complete a test payment.
+     */
+    completeBenefitPay: async (args: { transactionId: string }): Promise<{
+      transactionId: string;
+      status: "completed";
+    }> => {
+      const { data, error } = await supabase.rpc("complete_benefitpay_transaction", {
+        p_transaction_id: args.transactionId,
+      });
+      if (error) throw error;
+      const row = (data ?? null) as { transactionId: string; status: "completed" } | null;
+      if (!row) throw new Error("Could not complete transaction.");
+      return row;
+    },
+  },
+
+  waiter: {
+    /** Customer calls the waiter from the public QR menu. */
+    callWaiter: async (args: {
+      tableId: string;
+      type?: "assistance" | "bill";
+    }): Promise<{ callId: string; status: string }> => {
+      const { data, error } = await supabase.rpc("call_waiter", {
+        p_table_id: args.tableId,
+        p_type: args.type ?? "assistance",
+      });
+      if (error) throw error;
+      return (data ?? { status: "pending" }) as { callId: string; status: string };
     },
   },
 
@@ -1185,6 +1288,89 @@ export const api = {
         statusCounts,
         topItems,
       };
+    },
+  },
+
+  reports: {
+    /**
+     * Last 7 days of paid revenue, bucketed by local calendar day (missing
+     * days are zero-filled so charts render a continuous axis).
+     */
+    getDailySales: async (): Promise<
+      { date: string; revenue: number; orders: number }[]
+    > => {
+      const projectId = await getMyProjectId();
+      if (!projectId) return [];
+      const since = new Date(Date.now() - 6 * 86400000);
+      since.setHours(0, 0, 0, 0);
+      const { data, error } = await supabase
+        .from("orders")
+        .select("created_at, total")
+        .eq("project_id", projectId)
+        .eq("payment_status", "paid")
+        .gte("created_at", since.toISOString());
+      if (error) throw error;
+
+      const dayKey = (d: Date) => {
+        // Local calendar day (browser timezone), not UTC.
+        const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+        return local.toISOString().slice(0, 10);
+      };
+
+      const days = new Map<string, { revenue: number; orders: number }>();
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 86400000);
+        days.set(dayKey(d), { revenue: 0, orders: 0 });
+      }
+      for (const row of data ?? []) {
+        const key = dayKey(new Date(row.created_at));
+        const entry = days.get(key);
+        if (entry) {
+          entry.revenue += num(row.total);
+          entry.orders += 1;
+        }
+      }
+      return [...days.entries()].map(([date, v]) => ({ date, ...v }));
+    },
+
+    /**
+     * Top products by units sold over the last 30 days (non-cancelled
+     * orders only), with revenue — feeds the performance chart.
+     */
+    getProductPerformance: async (): Promise<
+      { name: string; nameAr?: string; qty: number; revenue: number }[]
+    > => {
+      const projectId = await getMyProjectId();
+      if (!projectId) return [];
+      const since = new Date(Date.now() - 30 * 86400000).toISOString();
+      const { data, error } = await supabase
+        .from("order_items")
+        .select(
+          "product_name, product_name_ar, quantity, total_price, orders!inner(status, project_id)",
+        )
+        .eq("orders.project_id", projectId)
+        .neq("orders.status", "cancelled")
+        .gte("orders.created_at", since)
+        .limit(5000);
+      if (error) throw error;
+
+      const agg = new Map<
+        string,
+        { name: string; nameAr?: string; qty: number; revenue: number }
+      >();
+      for (const i of data ?? []) {
+        const key = String(i.product_name ?? "—");
+        const cur = agg.get(key) ?? {
+          name: key,
+          nameAr: (i.product_name_ar as string | null) ?? undefined,
+          qty: 0,
+          revenue: 0,
+        };
+        cur.qty += num(i.quantity);
+        cur.revenue += num(i.total_price);
+        agg.set(key, cur);
+      }
+      return [...agg.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 8);
     },
   },
 
@@ -1355,6 +1541,7 @@ export const api = {
         products: products.map(mapProduct).filter((p) => p.isActive),
         addonsByProduct,
         tableName: menu.table?.name,
+        tableId: menu.table?.id,
       };
     },
 

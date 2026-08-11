@@ -1,55 +1,90 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation } from "@/lib/react-query";
 import { api } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import { useI18n } from "@/lib/i18n";
 import { formatTime, computeSLA, slaColor } from "@/lib/format";
+import { useKDSSound } from "@/hooks/use-kds-sound";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Bell } from "lucide-react";
+import { CheckCircle, Bell, Volume2, VolumeX, Receipt } from "lucide-react";
+import { toast } from "sonner";
 import type { Id } from "@/lib/api";
+
+const MUTE_KEY = "dokan-kds-muted";
 
 export default function KDS() {
   const orders = useQuery(api.orders.listOrders);
   const updateStatus = useMutation(api.orders.updateOrderStatus);
   const { t, lang } = useI18n();
   const [, setNow] = useState(0);
+  const { playNewOrder } = useKDSSound();
 
-  // Update SLA timers every 30s
+  // Sound preference — persisted, so the mute survives reloads.
+  const [muted, setMuted] = useState(() => localStorage.getItem(MUTE_KEY) === "1");
+
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      localStorage.setItem(MUTE_KEY, next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  // Update SLA timers every 30s (A11y: never every second)
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // New-order sound
+  // New-order sound + waiter-call subscription
   const prevCountRef = useRef(0);
   useEffect(() => {
     if (!orders) return;
     const pending = orders.filter((o) => o.status === "pending").length;
-    if (pending > prevCountRef.current && prevCountRef.current > 0) {
-      // Play notification sound
-      try {
-        const AudioCtx =
-          window.AudioContext ??
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtx) {
-          const audioCtx = new AudioCtx();
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.type = "sine";
-          osc.frequency.value = 880;
-          gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.start();
-          osc.stop(audioCtx.currentTime + 0.3);
-        }
-      } catch {
-        // audio not supported
-      }
+    if (pending > prevCountRef.current && prevCountRef.current > 0 && !muted) {
+      playNewOrder();
     }
     prevCountRef.current = pending;
-  }, [orders]);
+  }, [orders, muted, playNewOrder]);
+
+  // Customer "Call Waiter" — toast staff the moment it lands via Realtime.
+  useEffect(() => {
+    const channel = supabase
+      .channel("waiter-calls-kds")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "waiter_calls" },
+        async (payload) => {
+          const row = payload.new as { table_id?: string; type?: string } | null;
+          const tableId = row?.table_id;
+          const type = row?.type === "bill" ? "bill" : "assistance";
+          let label = "";
+          if (tableId) {
+            const { data } = await supabase
+              .from("tables")
+              .select("name")
+              .eq("id", tableId)
+              .maybeSingle();
+            label = data?.name ?? tableId.slice(0, 8);
+          }
+          toast(
+            type === "bill"
+              ? `${t("menu.bill")} — ${label}`
+              : `${t("kds.waiterCall")} — ${label}`,
+            {
+              icon: type === "bill" ? <Receipt className="size-4 text-gold" /> : <Bell className="size-4 text-gold" />,
+              duration: 8000,
+            },
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [t]);
 
   const pendingOrders = (orders ?? [])
     .filter((o) => o.status === "pending" || o.status === "preparing")
@@ -73,10 +108,23 @@ export default function KDS() {
             {pendingOrders.length} {t("order.status.pending")}
           </p>
         </div>
-        <Badge variant="outline" className="gap-2">
-          <Bell className="size-3" />
-          {t("kds.newOrder")}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 min-h-[40px]"
+            onClick={toggleMute}
+            aria-label={muted ? t("kds.unmute") : t("kds.mute")}
+            aria-pressed={muted}
+          >
+            {muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+            {muted ? t("kds.unmute") : t("kds.mute")}
+          </Button>
+          <Badge variant="outline" className="gap-2">
+            <Bell className="size-3" />
+            {t("kds.newOrder")}
+          </Badge>
+        </div>
       </div>
 
       <div className="grid gap-6 sm:grid-cols-2">
@@ -91,7 +139,7 @@ export default function KDS() {
               return (
                 <div
                   key={o._id}
-                  className={`rounded-md border-l-4 border bg-card p-4 shadow-sm ${slaColor(pct)}`}
+                  className={`rounded-md border bg-card p-4 shadow-sm ${slaColor(pct)} ${pct >= 100 ? "sla-critical" : ""}`}
                 >
                   <div className="flex items-start justify-between">
                     <div>
@@ -121,7 +169,10 @@ export default function KDS() {
                   </div>
 
                   <div className="mt-3 flex items-center justify-between">
-                    <span className={`font-mono text-xs ${pct >= 100 ? "text-red-600 sla-critical" : pct >= 75 ? "text-amber-600" : "text-green-600"}`}>
+                    <span
+                      aria-live="polite"
+                      className={`font-mono text-xs ${pct >= 100 ? "text-red-600" : pct >= 75 ? "text-amber-600" : "text-emerald-600"}`}
+                    >
                       {pct}% · {t("kds.sla")}
                     </span>
                     <Button
@@ -153,7 +204,7 @@ export default function KDS() {
               return (
                 <div
                   key={o._id}
-                  className={`rounded-md border-l-4 border bg-card p-4 shadow-sm ${slaColor(pct)}`}
+                  className={`rounded-md border bg-card p-4 shadow-sm ${slaColor(pct)} ${pct >= 100 ? "sla-critical" : ""}`}
                 >
                   <div className="flex items-start justify-between">
                     <div>
@@ -179,7 +230,7 @@ export default function KDS() {
                       </p>
                     ))}
                   </div>
-                  <span className={`mt-2 inline-block font-mono text-xs ${pct >= 100 ? "text-red-600 sla-critical" : "text-muted-foreground"}`}>
+                  <span className={`mt-2 inline-block font-mono text-xs ${pct >= 100 ? "text-red-600" : "text-muted-foreground"}`}>
                     {pct}% SLA
                   </span>
                 </div>

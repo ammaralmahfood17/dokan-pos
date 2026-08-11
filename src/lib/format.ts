@@ -53,9 +53,14 @@ export function computeSLA(createdAt: number, targetMs = 12 * 60 * 1000): number
   return Math.min(100, Math.round((elapsed / targetMs) * 100));
 }
 
-/** Get SLA color class. */
+/**
+ * SLA color classes for KDS cards:
+ *  - < 75%: green   (on track)
+ *  - 75–100%: gold/amber (getting close)
+ *  - ≥ 100%: red + pulse (computeSLA caps at 100, so ≥ 100 is the breach bucket)
+ */
 export function slaColor(pct: number): string {
-  if (pct < 75) return "border-l-green-500";
-  if (pct < 100) return "border-l-amber-500";
-  return "border-l-red-500";
+  if (pct < 75) return "border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30";
+  if (pct < 100) return "border-gold bg-amber-50/60 dark:bg-amber-950/30";
+  return "border-red-500 bg-red-50/60 dark:bg-red-950/30";
 }

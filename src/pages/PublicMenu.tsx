@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@/lib/react-query";
 import { api } from "@/lib/api";
 import type { Addon, Product } from "@/lib/api";
@@ -9,9 +9,49 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { ShoppingCart, Plus, Minus, Trash2, Bell, CheckCircle, Loader2 } from "lucide-react";
+import { ShoppingCart, Plus, Minus, Trash2, Bell, CheckCircle, Loader2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useParams } from "react-router";
+import { MenuShimmer } from "@/components/menu/MenuShimmer";
+
+type CartItem = {
+  productId: string;
+  name: string;
+  nameAr?: string;
+  unitPrice: number;
+  quantity: number;
+  addons: Addon[];
+};
+
+/** Stable per-device id — used to tell "this phone" from "another phone". */
+function getDeviceSessionId(): string {
+  let id = localStorage.getItem("dokan-session-id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("dokan-session-id", id);
+  }
+  return id;
+}
+
+interface SharedCart {
+  items: CartItem[];
+  fromOther: boolean;
+}
+
+function readSharedCart(key: string | null): SharedCart {
+  if (!key) return { items: [], fromOther: false };
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { items: [], fromOther: false };
+    const parsed = JSON.parse(raw) as { sessionId?: string; items?: CartItem[] };
+    const items = Array.isArray(parsed.items) ? parsed.items : [];
+    const fromOther =
+      Boolean(parsed.sessionId && parsed.sessionId !== getDeviceSessionId() && items.length > 0);
+    return { items, fromOther };
+  } catch {
+    return { items: [], fromOther: false };
+  }
+}
 
 export default function PublicMenu() {
   const { projectSlug, tableSlug } = useParams<{ projectSlug: string; tableSlug: string }>();
@@ -22,23 +62,52 @@ export default function PublicMenu() {
   const createOrder = useMutation(api.public.createPublicOrder);
   const { t, lang } = useI18n();
   const [placing, setPlacing] = useState(false);
-
-  type CartItem = {
-    productId: string;
-    name: string;
-    nameAr?: string;
-    unitPrice: number;
-    quantity: number;
-    addons: Addon[];
-  };
+  const [waiterCalling, setWaiterCalling] = useState(false);
 
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [cart, setCart] = useState<CartItem[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [showAddon, setShowAddon] = useState<Product | null>(null);
   const [addonSelections, setAddonSelections] = useState<Addon[]>([]);
   const [placed, setPlaced] = useState<{ orderNumber: string } | null>(null);
+
+  // ── Shared table cart (P0.4) ────────────────────────────────────────────
+  // One cart per table: keyed `dokan-cart-<project>-<table>` so every phone
+  // at the same table sees the same cart. Multi-tab sync via `storage` events.
+  const cartKey = projectSlug && tableSlug ? `dokan-cart-${projectSlug}-${tableSlug}` : null;
+  const [sharedInit] = useState(() => readSharedCart(cartKey));
+  const [cart, setCart] = useState<CartItem[]>(sharedInit.items);
+  const [fromOtherSession, setFromOtherSession] = useState(sharedInit.fromOther);
+
+  // Persist on every change.
+  useEffect(() => {
+    if (!cartKey) return;
+    try {
+      localStorage.setItem(cartKey, JSON.stringify({ sessionId: getDeviceSessionId(), items: cart }));
+    } catch {
+      // Quota exceeded — keep the in-memory cart, nothing else to do.
+    }
+  }, [cart, cartKey]);
+
+  // Another tab/phone at the same table changed the cart → adopt it.
+  useEffect(() => {
+    if (!cartKey) return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== cartKey || !e.newValue) return;
+      try {
+        const parsed = JSON.parse(e.newValue) as { sessionId?: string; items?: CartItem[] };
+        const items = Array.isArray(parsed.items) ? parsed.items : [];
+        setCart(items);
+        setFromOtherSession(
+          Boolean(parsed.sessionId && parsed.sessionId !== getDeviceSessionId() && items.length > 0),
+        );
+      } catch {
+        // Malformed write from another tab — ignore.
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [cartKey]);
 
   const project = menu?.project;
   const categories = menu?.categories ?? [];
@@ -75,6 +144,21 @@ export default function PublicMenu() {
 
   const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
+  /** "Call Waiter" — inserts a waiter_calls row (staff see it via Realtime). */
+  const handleCallWaiter = async () => {
+    const tableId = menu?.tableId;
+    if (!tableId || waiterCalling) return;
+    setWaiterCalling(true);
+    try {
+      await api.waiter.callWaiter({ tableId, type: "assistance" });
+      toast(t("menu.waiterCallSent"));
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setWaiterCalling(false);
+    }
+  };
+
   const handlePlace = async () => {
     if (!projectSlug || !tableSlug || placing) return;
     setPlacing(true);
@@ -101,6 +185,7 @@ export default function PublicMenu() {
       });
       setPlaced(result);
       setCart([]);
+      setFromOtherSession(false);
     } catch (err) {
       toast.error(String(err));
     } finally {
@@ -110,8 +195,8 @@ export default function PublicMenu() {
 
   if (menu === undefined) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="animate-pulse text-sm text-muted-foreground">Loading menu...</div>
+      <div className="min-h-screen bg-background">
+        <MenuShimmer />
       </div>
     );
   }
@@ -257,8 +342,8 @@ export default function PublicMenu() {
             key={c._id}
             type="button"
             onClick={() => setActiveCategory(c._id)}
-            className={`shrink-0 rounded-sm px-3 py-1.5 text-xs font-medium transition-colors
-              ${activeCategory === c._id ? "bg-foreground text-background" : "bg-secondary text-muted-foreground"}`}
+            className={`cv-auto shrink-0 rounded-sm px-3 py-1.5 text-xs font-medium transition-colors
+                        ${activeCategory === c._id ? "bg-foreground text-background" : "bg-secondary text-muted-foreground"}`}
           >
             {displayLang === "ar" ? c.nameAr : c.name}
           </button>
@@ -272,7 +357,7 @@ export default function PublicMenu() {
           return (
             <div
               key={p._id}
-              className="flex items-center justify-between rounded-sm border border-border p-3 transition-colors hover:bg-card"
+              className="cv-auto flex items-center justify-between rounded-sm border border-border p-3 transition-colors hover:bg-card"
             >
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">
@@ -356,10 +441,12 @@ export default function PublicMenu() {
         <div className="flex gap-2 max-w-2xl mx-auto">
           <button
             type="button"
-            onClick={() => toast.info("A staff member will be with you shortly.")}
-            className="flex items-center justify-center gap-2 rounded-sm border border-border px-4 py-3 text-xs font-medium transition-colors hover:bg-secondary min-h-[44px]"
+            onClick={() => void handleCallWaiter()}
+            disabled={waiterCalling}
+            aria-label={t("menu.callWaiter")}
+            className="flex items-center justify-center gap-2 rounded-sm border border-border px-4 py-3 text-xs font-medium transition-colors hover:bg-secondary min-h-[44px] disabled:opacity-60"
           >
-            <Bell className="size-4" />
+            {waiterCalling ? <Loader2 className="size-4 animate-spin" /> : <Bell className="size-4" />}
             {t("menu.callWaiter")}
           </button>
           <Button
@@ -372,6 +459,15 @@ export default function PublicMenu() {
           >
             {t("menu.yourOrder")} ({cartCount}) · {formatBHD(subtotal, displayLang)}
           </Button>
+          {fromOtherSession && cartCount > 0 && (
+            <span
+              className="flex items-center gap-1 rounded-sm border border-gold/50 bg-gold/10 px-2 py-1 text-[10px] font-medium text-foreground"
+              aria-label={t("menu.sharedCart")}
+            >
+              <Users className="size-3 text-gold" />
+              {t("menu.sharedCart")}
+            </span>
+          )}
         </div>
       </div>
     </div>
