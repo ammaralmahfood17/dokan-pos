@@ -20,6 +20,8 @@ alter table public.waiter_calls enable row level security;
 
 -- Staff can read calls for their own project (acknowledgement is a future
 -- RPC; the table stays append-only from the client's perspective).
+-- Guarded so the migration is re-runnable (42710 on duplicate).
+drop policy if exists "Staff can read waiter calls" on public.waiter_calls;
 create policy "Staff can read waiter calls"
   on public.waiter_calls
   for select
@@ -27,8 +29,21 @@ create policy "Staff can read waiter calls"
     is_staff((select project_id from public.tables where id = table_id))
   );
 
--- Push new calls to the dashboard/KDS clients.
-alter publication supabase_realtime add table public.waiter_calls;
+-- Push new calls to the dashboard/KDS clients (idempotent: skip if the table
+-- is already a member of the realtime publication).
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_rel pr
+    join pg_class c on c.oid = pr.prrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where pr.prpubid = (select oid from pg_publication where pubname = 'supabase_realtime')
+      and n.nspname = 'public'
+      and c.relname = 'waiter_calls'
+  ) then
+    alter publication supabase_realtime add table public.waiter_calls;
+  end if;
+end $$;
 
 -- Customer-facing RPC: validates the table, records the call, broadcasts.
 create or replace function public.call_waiter(
